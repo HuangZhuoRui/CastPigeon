@@ -18,8 +18,13 @@
  *                 EXTRA_TEXT 或 EXTRA_TEXT_LINES。
  *   timestamp  -- 通知生成时间戳 (Epoch Millis)，来自 StatusBarNotification.postTime，
  *                 接收端可用于排序、去重和 UI 时间线展示。
+ *
+ * BLE传输限制警告:
+ *   由于底层采用BLE传输并且单包MTU设为512字节，
+ *   序列化后的NotificationMessage总大小绝对不能超过509字节。
+ *   在传输前如果发现超出该限制，必须采取截断content属性（仅保留title）的处理策略。
  */
-package com.yourcompany.notilinker.shared
+package com.suseoaa.castpigeon.shared
 
 data class NotificationMessage(
     val id: String,

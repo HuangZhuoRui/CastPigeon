@@ -6,10 +6,8 @@ import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
-import com.suseoaa.castpigeon.network.NetworkService
-import com.suseoaa.castpigeon.network.ConnectionState
-import com.yourcompany.notilinker.shared.NotificationMessage
-import com.yourcompany.notilinker.shared.NotificationRepository
+import com.suseoaa.castpigeon.shared.NotificationMessage
+import com.suseoaa.castpigeon.shared.NotificationRepository
 
 class MyNotificationListener : NotificationListenerService() {
 
@@ -59,13 +57,8 @@ class MyNotificationListener : NotificationListenerService() {
                 content = content, timestamp = sbn.postTime
             )
 
+            // 将通知发布至全局总线，由专门的协调器（或ViewModel）接管广播引信的发射逻辑
             NotificationRepository.publish(message)
-
-            // 向已配对的 Mac 转发捕获到的通知
-            val ns = NetworkService.instance
-            if (ns != null && ns.state == ConnectionState.PAIRED) {
-                ns.sendNotification(message.appName, message.title, message.content)
-            }
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to process notification from ${sbn.packageName}", e)

@@ -34,7 +34,7 @@
  *     使用 tryEmit 并忽略返回值是最安全的选择——消息要么成功入队, 要么因缓冲满
  *     而被静默丢弃, 不会阻塞系统服务。
  */
-package com.yourcompany.notilinker.shared
+package com.suseoaa.castpigeon.shared
 
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow

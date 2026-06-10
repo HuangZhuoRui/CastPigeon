@@ -7,15 +7,19 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5273E93FBAFBEF5BF368F5AC /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2FB73B0F10A5986B13E0997 /* Models.swift */; };
+		795A7E478C354CAE4682837F /* MainViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07817A75C6CA871F9C56B19A /* MainViewModel.swift */; };
 		A1B2C3D4E5F6A7B8C9D0E100 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E200 /* App.swift */; };
-		A1B2C3D4E5F6A7B8C9D0E101 /* NetworkManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E201 /* NetworkManager.swift */; };
+		BE34590FB7CBDF9D2C6D46D1 /* SwiftUdpDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48883F9F2A98DBC7B8BE3DF3 /* SwiftUdpDiscovery.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		07817A75C6CA871F9C56B19A /* MainViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MainViewModel.swift; sourceTree = "<group>"; };
+		48883F9F2A98DBC7B8BE3DF3 /* SwiftUdpDiscovery.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SwiftUdpDiscovery.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D0E200 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F6A7B8C9D0E201 /* NetworkManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkManager.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D0E202 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D0E203 /* CastPigeonMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CastPigeonMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2FB73B0F10A5986B13E0997 /* Models.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -29,7 +33,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A1B2C3D4E5F6A7B8C9D0E400 /* Root */ = {
+		7329B17EB59FBDD417B70B1D /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				07817A75C6CA871F9C56B19A /* MainViewModel.swift */,
+			);
+			name = ViewModels;
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F6A7B8C9D0E400 = {
 			isa = PBXGroup;
 			children = (
 				A1B2C3D4E5F6A7B8C9D0E401 /* CastPigeonMac */,
@@ -41,8 +54,10 @@
 			isa = PBXGroup;
 			children = (
 				A1B2C3D4E5F6A7B8C9D0E200 /* App.swift */,
-				A1B2C3D4E5F6A7B8C9D0E201 /* NetworkManager.swift */,
 				A1B2C3D4E5F6A7B8C9D0E202 /* Info.plist */,
+				EB02E279256143A1CE531501 /* Models */,
+				AA88523F9D113D3A36F23FE2 /* Network */,
+				7329B17EB59FBDD417B70B1D /* ViewModels */,
 			);
 			path = CastPigeonMac;
 			sourceTree = "<group>";
@@ -55,12 +70,30 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		AA88523F9D113D3A36F23FE2 /* Network */ = {
+			isa = PBXGroup;
+			children = (
+				48883F9F2A98DBC7B8BE3DF3 /* SwiftUdpDiscovery.swift */,
+			);
+			name = Network;
+			path = Network;
+			sourceTree = "<group>";
+		};
+		EB02E279256143A1CE531501 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A2FB73B0F10A5986B13E0997 /* Models.swift */,
+			);
+			name = Models;
+			path = Models;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		A1B2C3D4E5F6A7B8C9D0E500 /* CastPigeonMac */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A1B2C3D4E5F6A7B8C9D0E600 /* Build configuration list */;
+			buildConfigurationList = A1B2C3D4E5F6A7B8C9D0E600 /* Build configuration list for PBXNativeTarget "CastPigeonMac" */;
 			buildPhases = (
 				A1B2C3D4E5F6A7B8C9D0E501 /* Sources */,
 				A1B2C3D4E5F6A7B8C9D0E300 /* Frameworks */,
@@ -89,7 +122,7 @@
 					};
 				};
 			};
-			buildConfigurationList = A1B2C3D4E5F6A7B8C9D0E800 /* Build configuration list */;
+			buildConfigurationList = A1B2C3D4E5F6A7B8C9D0E800 /* Build configuration list for PBXProject "CastPigeonMac" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -97,7 +130,7 @@
 				en,
 				Base,
 			);
-			mainGroup = A1B2C3D4E5F6A7B8C9D0E400 /* Root */;
+			mainGroup = A1B2C3D4E5F6A7B8C9D0E400;
 			productRefGroup = A1B2C3D4E5F6A7B8C9D0E402 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -113,7 +146,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1B2C3D4E5F6A7B8C9D0E100 /* App.swift in Sources */,
-				A1B2C3D4E5F6A7B8C9D0E101 /* NetworkManager.swift in Sources */,
+				5273E93FBAFBEF5BF368F5AC /* Models.swift in Sources */,
+				BE34590FB7CBDF9D2C6D46D1 /* SwiftUdpDiscovery.swift in Sources */,
+				795A7E478C354CAE4682837F /* MainViewModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -197,20 +232,20 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A1B2C3D4E5F6A7B8C9D0E800 /* Build configuration list for PBXProject */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				A1B2C3D4E5F6A7B8C9D0E801 /* Debug */,
-				A1B2C3D4E5F6A7B8C9D0E802 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		A1B2C3D4E5F6A7B8C9D0E600 /* Build configuration list for PBXNativeTarget */ = {
+		A1B2C3D4E5F6A7B8C9D0E600 /* Build configuration list for PBXNativeTarget "CastPigeonMac" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A1B2C3D4E5F6A7B8C9D0E803 /* Debug */,
 				A1B2C3D4E5F6A7B8C9D0E804 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1B2C3D4E5F6A7B8C9D0E800 /* Build configuration list for PBXProject "CastPigeonMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1B2C3D4E5F6A7B8C9D0E801 /* Debug */,
+				A1B2C3D4E5F6A7B8C9D0E802 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

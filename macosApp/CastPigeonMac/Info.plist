@@ -9,7 +9,7 @@
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
-    <string>com.yourcompany.notilinker.macos</string>
+    <string>com.suseoaa.castpigeon.macos</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -25,12 +25,10 @@
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>LSUIElement</key>
-    <false/>
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>CastPigeon uses the local network to connect with your Android device for notification mirroring.</string>
-    <key>NSBonjourServices</key>
-    <array>
-        <string>_castpigeon._tcp</string>
-    </array>
+    <true/>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>CastPigeon 需要使用蓝牙来捕获手机端发出的近场同步引信信号。</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>CastPigeon 需要使用蓝牙与手机进行通信传输。</string>
 </dict>
 </plist>

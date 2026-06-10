@@ -1,4 +1,4 @@
-package com.yourcompany.notilinker.shared
+package com.suseoaa.castpigeon.shared
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
