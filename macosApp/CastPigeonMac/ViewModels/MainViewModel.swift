@@ -1,22 +1,43 @@
 import Foundation
 import CoreBluetooth
+import UserNotifications
 import Combine
 
 final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate, CBPeripheralManagerDelegate {
-    @Published var role: DeviceRole = .receiver
+    @Published var role: DeviceRole = {
+        if let saved = UserDefaults.standard.string(forKey: "DeviceRole"), let r = DeviceRole(rawValue: saved) {
+            return r
+        }
+        return .receiver
+    }() {
+        didSet {
+            UserDefaults.standard.set(role.rawValue, forKey: "DeviceRole")
+        }
+    }
     @Published var workMode: WorkMode = .idle
     @Published var connectionStateName: String = "Idle"
     @Published var connectionStateDescription: String = "静默期，无硬件能耗。"
     @Published var isAnimating: Bool = false
     @Published var receivedMessage: String? = nil
+    @Published var receivedImage: Data? = nil
     
-    @Published var boundDeviceHash: String? = UserDefaults.standard.string(forKey: "BoundDeviceHash")
+    private var receiveBuffers: [UUID: Data] = [:]
+    @Published var debugLogs: [String] = []
+    
+    @Published var boundDeviceHashes: [String] = UserDefaults.standard.stringArray(forKey: "BoundDeviceHashes") ?? []
     @Published var discoveredDevices: Set<String> = []
     @Published var udpDevices: [UdpDevice] = []
+    
+    @Published var showPinDisplay: Bool = false
+    @Published var displayPin: String = ""
+    @Published var requestingDevice: UdpDevice? = nil
+    
+    @Published var showPinInput: Bool = false
+    @Published var inputTargetDevice: UdpDevice? = nil
 
     private var centralManager: CBCentralManager!
     private var peripheralManager: CBPeripheralManager!
-    private var connectedPeripheral: CBPeripheral?
+    private var connectedPeripherals: [UUID: CBPeripheral] = [:]
     
     // Server state
     private var gattCharacteristic: CBMutableCharacteristic?
@@ -31,6 +52,10 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: nil)
         peripheralManager = CBPeripheralManager(delegate: self, queue: nil)
+        
+        if !boundDeviceHashes.isEmpty {
+            self.workMode = .working
+        }
     }
     
     var myHash: String {
@@ -40,47 +65,66 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
     }
 
     func bindDevice(device: UdpDevice) {
-        UserDefaults.standard.set(device.hash_, forKey: "BoundDeviceHash")
-        boundDeviceHash = device.hash_
-        
-        SwiftUdpDiscovery.shared.confirmBinding(
+        SwiftUdpDiscovery.shared.requestBinding(
             targetHash: device.hash_,
-            myRole: role.rawValue,
-            myName: Host.current().localizedName ?? "Mac",
-            myHash: myHash
+            targetDeviceName: device.deviceName,
+            targetRole: device.role,
+            targetIp: device.ip
         )
     }
     
-    func unbindDevice() {
-        UserDefaults.standard.removeObject(forKey: "BoundDeviceHash")
-        boundDeviceHash = nil
+    func verifyPin(pin: String) {
+        if let target = inputTargetDevice {
+            SwiftUdpDiscovery.shared.verifyBinding(targetHash: target.hash_, pin: pin, targetIp: target.ip)
+        }
+    }
+    
+    func unbindDevice(hash: String) {
+        boundDeviceHashes.removeAll { $0 == hash }
+        UserDefaults.standard.set(boundDeviceHashes, forKey: "BoundDeviceHashes")
     }
 
     func start(mode: WorkMode) {
         workMode = mode
         if mode == .pairing {
-            if role == .receiver {
-                SwiftUdpDiscovery.shared.startListening()
-                SwiftUdpDiscovery.shared.onDeviceDiscovered = { [weak self] devices in
-                    self?.udpDevices = devices
+            SwiftUdpDiscovery.shared.onDeviceDiscovered = { [weak self] devices in
+                self?.udpDevices = devices
+            }
+            SwiftUdpDiscovery.shared.onPairingSuccess = { [weak self] boundDevice in
+                guard let self = self, self.workMode == .pairing else { return }
+                if !self.boundDeviceHashes.contains(boundDevice.hash_) {
+                    self.boundDeviceHashes.append(boundDevice.hash_)
+                    UserDefaults.standard.set(self.boundDeviceHashes, forKey: "BoundDeviceHashes")
                 }
+                self.showPinInput = false
+                self.showPinDisplay = false
+                self.stopAll()
+            }
+            SwiftUdpDiscovery.shared.onPinDisplayRequested = { [weak self] pin, device in
+                self?.displayPin = pin
+                self?.requestingDevice = device
+                self?.showPinDisplay = true
+            }
+            SwiftUdpDiscovery.shared.onPinInputRequested = { [weak self] device in
+                self?.inputTargetDevice = device
+                self?.showPinInput = true
+            }
+            
+            if role == .receiver {
+                SwiftUdpDiscovery.shared.startListening(role: "Receiver", deviceName: Host.current().localizedName ?? "Mac", hash: myHash)
                 isAnimating = true
                 updateState(name: "Pairing", desc: "正在局域网中寻找发送端...")
             } else {
                 SwiftUdpDiscovery.shared.startBroadcasting(role: "Sender", deviceName: Host.current().localizedName ?? "Mac", hash: myHash)
-                SwiftUdpDiscovery.shared.onPairingSuccess = { [weak self] boundDevice in
-                    guard let self = self, self.workMode == .pairing else { return }
-                    UserDefaults.standard.set(boundDevice.hash_, forKey: "BoundDeviceHash")
-                    self.boundDeviceHash = boundDevice.hash_
-                    self.stopAll()
-                }
                 isAnimating = true
                 updateState(name: "Pairing", desc: "正在局域网中广播自己的位置...")
             }
         } else {
             if role == .receiver {
+                logDebug("进入 .receiver 的工作模式，调用 startScan")
                 startScan()
             } else {
+                logDebug("进入 .sender 的工作模式，调用 startAdvertising")
                 startAdvertising()
             }
         }
@@ -89,14 +133,21 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
     func stopAll() {
         SwiftUdpDiscovery.shared.stop()
         udpDevices.removeAll()
+        showPinDisplay = false
+        showPinInput = false
         
-        centralManager.stopScan()
-        if let p = connectedPeripheral {
-            centralManager.cancelPeripheralConnection(p)
-        }
-        peripheralManager.stopAdvertising()
         workMode = .idle
         isAnimating = false
+        if role == .receiver {
+            centralManager.stopScan()
+            for (_, peripheral) in connectedPeripherals {
+                centralManager.cancelPeripheralConnection(peripheral)
+            }
+            connectedPeripherals.removeAll()
+            receiveBuffers.removeAll()
+        } else {
+            peripheralManager.stopAdvertising()
+        }
         updateState(name: "Idle", desc: "静默期，无硬件能耗。")
     }
     
@@ -125,6 +176,10 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
             let service = CBMutableService(type: serviceUuid, primary: true)
             service.characteristics = [dataChar, handshakeChar]
             peripheralManager.add(service)
+            
+            if workMode != .idle && role == .sender {
+                startAdvertising()
+            }
         }
     }
     
@@ -153,12 +208,17 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
 
     // MARK: - Receiver (Central)
     private func startScan() {
-        guard centralManager.state == .poweredOn else { return }
+        logDebug("调用了 startScan")
+        guard centralManager.state == .poweredOn else {
+            logDebug("startScan 被拦截: 蓝牙未开启 (当前状态: \(centralManager.state.rawValue))")
+            return
+        }
         isAnimating = true
         updateState(name: "Scanning", desc: "正在寻找专属频率广播...")
         discoveredDevices.removeAll()
-        // 为了排查 Android 广播到底有没有发出来，暂时改为 nil，全量扫描非 Apple 设备
-        centralManager.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+        logDebug("执行 centralManager.scanForPeripherals (FF01 & ServiceUUID)")
+        let targetServices = [CBUUID(string: "FF01"), serviceUuid]
+        centralManager.scanForPeripherals(withServices: targetServices, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
     }
 
     private func updateState(name: String, desc: String) {
@@ -168,8 +228,22 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
         }
     }
     
+    func logDebug(_ msg: String) {
+        DispatchQueue.main.async {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss"
+            let timeString = formatter.string(from: Date())
+            self.debugLogs.insert("[\(timeString)] \(msg)", at: 0)
+            if self.debugLogs.count > 50 {
+                self.debugLogs.removeLast()
+            }
+        }
+    }
+    
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        logDebug("蓝牙中心设备状态更新: \(central.state.rawValue)")
         if central.state == .poweredOn && workMode != .idle && role == .receiver {
+            logDebug("蓝牙已开启，且处于工作模式，尝试开启扫描")
             startScan()
         }
     }
@@ -180,6 +254,19 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
         
         var debugInfo = ""
         
+        let isApple = (advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data)?.starts(with: [0x4C, 0x00]) ?? false
+        
+        if !isApple {
+            let names = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? "Unknown"
+            let sDataCount = (advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data])?.count ?? 0
+            logDebug("发现非苹果设备: \(names), ServiceData项数:\(sDataCount)")
+            if let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] {
+                for (uuid, data) in serviceData {
+                    logDebug("  - UUID: \(uuid.uuidString), Data: \(data.map{String(format:"%02X",$0)}.joined())")
+                }
+            }
+        }
+        
         // 1. Android -> Mac (Service Data 0xFF01)
         if let serviceData = advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data],
            let data = serviceData[CBUUID(string: "FF01")], data.count >= 5 {
@@ -188,6 +275,7 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
                 let hashData = data.subdata(in: 1..<5)
                 detectedHash = hashData.map { String(format: "%02X", $0) }.joined()
                 isPairingAd = false
+                logDebug("发现工作广播(0xFF01): \(detectedHash!)")
             }
         }
         
@@ -219,26 +307,38 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
             if !isPairingAd { return }
         } else if workMode == .working {
             if isPairingAd { return }
-            if let bound = boundDeviceHash, hash == bound {
-                central.stopScan()
-                updateState(name: "Connecting", desc: "发现工作广播 [\(hash)]，发起连接...")
-                self.connectedPeripheral = peripheral
-                peripheral.delegate = self
-                central.connect(peripheral, options: nil)
+            if boundDeviceHashes.contains(hash) {
+                if connectedPeripherals[peripheral.identifier] == nil {
+                    updateState(name: "Connecting", desc: "发现工作广播 [\(hash)]，发起连接...")
+                    logDebug("发现目标设备[\(hash)]，发起连接...")
+                    connectedPeripherals[peripheral.identifier] = peripheral
+                    peripheral.delegate = self
+                    central.connect(peripheral, options: nil)
+                }
             }
         }
     }
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         updateState(name: "Handshake", desc: "底层连接建立，发起握手...")
+        logDebug("设备已连接，发现服务...")
         peripheral.discoverServices([serviceUuid])
     }
     
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        logDebug("设备连接失败: \(error?.localizedDescription ?? "未知错误")")
+        connectedPeripherals.removeValue(forKey: peripheral.identifier)
+    }
+    
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        self.connectedPeripheral = nil
+        self.connectedPeripherals.removeValue(forKey: peripheral.identifier)
+        self.receiveBuffers.removeValue(forKey: peripheral.identifier)
+        logDebug("设备已断开: \(error?.localizedDescription ?? "未知")")
         if workMode != .idle {
-            updateState(name: "Scanning", desc: "连接已断开，重新扫描...")
-            centralManager.scanForPeripherals(withServices: [serviceUuid], options: nil)
+            updateState(name: "Scanning", desc: "有一台设备已断开，重新扫描...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.startScan()
+            }
         } else {
             updateState(name: "Idle", desc: "静默期。")
             isAnimating = false
@@ -246,36 +346,104 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
     }
     
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        if let err = error { logDebug("发现服务失败: \(err.localizedDescription)"); return }
         if let services = peripheral.services {
             for service in services where service.uuid == serviceUuid {
+                logDebug("发现目标服务，继续发现特征...")
                 peripheral.discoverCharacteristics([handshakeCharUuid, charUuid], for: service)
             }
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        if let err = error { logDebug("发现特征失败: \(err.localizedDescription)"); return }
         if let characteristics = service.characteristics {
             for char in characteristics {
                 if char.uuid == handshakeCharUuid {
+                    logDebug("发现握手特征，发送Mac名称...")
                     let macName = Host.current().localizedName ?? "Mac"
                     if let data = macName.data(using: .utf8) {
                         peripheral.writeValue(data, for: char, type: .withResponse)
                     }
                 } else if char.uuid == charUuid {
+                    logDebug("发现数据特征，订阅通知...")
                     peripheral.setNotifyValue(true, for: char)
                     updateState(name: "Transferring", desc: "通道建立成功，等待消息...")
                 }
             }
         }
     }
+    
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        if let err = error {
+            logDebug("订阅状态更新失败: \(err.localizedDescription)")
+        } else {
+            logDebug("订阅状态更新成功: isNotifying = \(characteristic.isNotifying)")
+        }
+    }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let err = error { logDebug("接收数据失败: \(err.localizedDescription)"); return }
         if characteristic.uuid == charUuid, let data = characteristic.value {
-            if let msg = String(data: data, encoding: .utf8) {
-                DispatchQueue.main.async {
-                    self.receivedMessage = msg
+            let startMarker = Data([0x00, 0x01, 0x02, 0x03])
+            let endMarker = Data([0xFF, 0xFE, 0xFD, 0xFC])
+            
+            if receiveBuffers[peripheral.identifier] == nil {
+                receiveBuffers[peripheral.identifier] = Data()
+            }
+            
+            if data == startMarker {
+                receiveBuffers[peripheral.identifier]?.removeAll()
+            } else if data == endMarker {
+                if let completeData = receiveBuffers[peripheral.identifier] {
+                    receiveBuffers[peripheral.identifier]?.removeAll()
+                    if let msg = String(data: completeData, encoding: .utf8) {
+                        DispatchQueue.main.async {
+                            self.receivedMessage = msg
+                            self.showNotification(from: completeData)
+                        }
+                    }
+                }
+            } else {
+                receiveBuffers[peripheral.identifier]?.append(data)
+            }
+        }
+    }
+    
+    private func showNotification(from data: Data) {
+        do {
+            let decoder = JSONDecoder()
+            let message = try decoder.decode(NotificationMessage.self, from: data)
+            logDebug("成功解码通知: \(message.title)")
+            
+            let content = UNMutableNotificationContent()
+            content.title = message.title
+            content.subtitle = message.appName
+            content.body = message.content
+            content.sound = UNNotificationSound.default
+            
+            if let iconBase64 = message.iconBase64, let iconData = Data(base64Encoded: iconBase64) {
+                let tempDir = FileManager.default.temporaryDirectory
+                let tempFile = tempDir.appendingPathComponent("\(UUID().uuidString).png")
+                do {
+                    try iconData.write(to: tempFile)
+                    let attachment = try UNNotificationAttachment(identifier: "icon", url: tempFile, options: nil)
+                    content.attachments = [attachment]
+                } catch {
+                    logDebug("处理图标附件失败: \(error.localizedDescription)")
                 }
             }
+            
+            let request = UNNotificationRequest(identifier: message.id, content: content, trigger: nil)
+            UNUserNotificationCenter.current().add(request) { error in
+                if let error = error {
+                    self.logDebug("通知推送失败: \(error.localizedDescription)")
+                } else {
+                    self.logDebug("通知推送到系统成功！")
+                }
+            }
+        } catch {
+            self.logDebug("解码通知失败: \(error.localizedDescription)")
         }
     }
 }

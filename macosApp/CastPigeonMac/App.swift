@@ -1,13 +1,37 @@
 import SwiftUI
 import AppKit
+import UserNotifications
+
+// MARK: - AppDelegate for Notifications
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    func applicationDidFinishLaunching(_ notification: Foundation.Notification) {
+        UNUserNotificationCenter.current().delegate = self
+    }
+    
+    // 允许在应用处于前台时展示通知弹窗
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound, .badge])
+    }
+}
+
 // MARK: - App Entry
 @main
 struct CastPigeonMacApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var viewModel = MainViewModel()
 
     init() {
-        // 恢复为常规带 Dock 栏的窗口应用，方便测试与截图
+        // 使用常规的独立窗口应用模式
         NSApplication.shared.setActivationPolicy(.regular)
+        
+        // 请求通知权限
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if granted {
+                print("Notification permission granted")
+            } else if let error = error {
+                print("Notification permission error: \(error)")
+            }
+        }
     }
 
     var body: some Scene {
@@ -15,168 +39,418 @@ struct CastPigeonMacApp: App {
             ContentView()
                 .environmentObject(viewModel)
         }
+        .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unifiedCompact)
     }
 }
 
-struct VisualEffectView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .hudWindow
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
+// MARK: - Sidebar Item
+enum SidebarItem: String, CaseIterable, Identifiable {
+    case dashboard = "仪表盘"
+    case devices = "设备管理"
+    
+    var id: String { self.rawValue }
+    
+    var icon: String {
+        switch self {
+        case .dashboard: return "gauge.with.dots.needle.bottom.100percent"
+        case .devices: return "macbook.and.iphone"
+        }
     }
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
-
 
 // MARK: - Main View
 struct ContentView: View {
     @EnvironmentObject var viewModel: MainViewModel
-
+    @State private var selection: SidebarItem? = .dashboard
+    
     var body: some View {
-        ZStack {
-            VisualEffectView().ignoresSafeArea()
+        NavigationSplitView {
+            List(SidebarItem.allCases, selection: $selection) { item in
+                NavigationLink(value: item) {
+                    Label(item.rawValue, systemImage: item.icon)
+                        .font(.system(size: 14, weight: .medium))
+                        .padding(.vertical, 4)
+                }
+            }
+            .navigationTitle("CastPigeon")
+            .listStyle(.sidebar)
+        } detail: {
+            Group {
+                switch selection {
+                case .dashboard:
+                    DashboardView()
+                case .devices:
+                    DevicesView()
+                case .none:
+                    Text("请选择一个菜单")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(VisualEffectView(material: .contentBackground, blendingMode: .behindWindow))
+        }
+        .frame(minWidth: 800, minHeight: 500)
+    }
+}
 
-            VStack(spacing: 20) {
-                // Header
-                HStack {
-                    Image(systemName: "paperplane.circle.fill")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundColor(statusColor)
-                        .scaleEffect(viewModel.isAnimating ? 1.1 : 1.0)
-                        .animation(.spring(response: 0.4, dampingFraction: 0.5), value: viewModel.isAnimating)
-                    
-                    Text("CastPigeon")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundColor(.primary)
-                    
-                    Spacer()
-                    
-                    Button(action: { NSApplication.shared.terminate(nil) }) {
-                        Image(systemName: "power")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.secondary)
-                    }.buttonStyle(.plain).padding(.leading, 8)
-                }.padding(.top, 16).padding(.horizontal, 20)
-
-                Divider().background(Color.secondary.opacity(0.3))
-
-                // Role Selection
+// MARK: - Dashboard View
+struct DashboardView: View {
+    @EnvironmentObject var viewModel: MainViewModel
+    
+    var body: some View {
+        VStack(spacing: 30) {
+            Text("CastPigeon 工作台")
+                .font(.system(size: 32, weight: .bold, design: .rounded))
+                .padding(.top, 40)
+            
+            // Mode Selection
+            HStack(spacing: 40) {
+                ModeCard(
+                    title: "作为接收端 (Mac)",
+                    desc: "接收来自手机的推送通知和剪贴板。",
+                    icon: "desktopcomputer",
+                    isSelected: viewModel.role == .receiver,
+                    action: { viewModel.role = .receiver }
+                )
+                .disabled(viewModel.workMode != .idle)
+                
+                ModeCard(
+                    title: "作为发送端 (测试用)",
+                    desc: "向其他设备广播并发送数据。",
+                    icon: "antenna.radiowaves.left.and.right",
+                    isSelected: viewModel.role == .sender,
+                    action: { viewModel.role = .sender }
+                )
+                .disabled(viewModel.workMode != .idle)
+            }
+            .padding(.horizontal, 40)
+            
+            // Status and Control
+            VStack(spacing: 16) {
+                Text(viewModel.connectionStateName)
+                    .font(.system(size: 18, weight: .semibold))
+                
+                Text(viewModel.connectionStateDescription)
+                    .font(.system(size: 14))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                if viewModel.isAnimating {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                        .padding()
+                }
+                
                 if viewModel.workMode == .idle {
-                    Picker("角色", selection: $viewModel.role) {
-                        ForEach(DeviceRole.allCases, id: \.self) { role in
-                            Text(role.rawValue).tag(role)
+                    Button(action: {
+                        viewModel.start(mode: .working)
+                    }) {
+                        Text("启动工作")
+                            .font(.system(size: 16, weight: .bold))
+                            .frame(width: 200, height: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                } else {
+                    Button(action: {
+                        viewModel.stopAll()
+                    }) {
+                        Text("停止并断开")
+                            .font(.system(size: 16, weight: .bold))
+                            .frame(width: 200, height: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+            .cornerRadius(16)
+            .padding(.horizontal, 40)
+            
+            // 实时调试日志
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("BLE 实时诊断日志：")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("插入测试日志") {
+                        viewModel.logDebug("这是一条手动插入的测试日志！")
+                    }
+                    .controlSize(.small)
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(viewModel.debugLogs, id: \.self) { log in
+                            Text(log)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.primary)
+                                .padding(.vertical, 2)
                         }
                     }
-                    .pickerStyle(SegmentedPickerStyle())
-                    .padding(.horizontal, 20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(height: 150)
+                .padding()
+                .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+                .cornerRadius(8)
+            }
+            .padding(.horizontal, 40)
+            .padding(.bottom, 20)
+            
+            Spacer()
+        }
+    }
+}
 
-                // Status Area
-                VStack(spacing: 8) {
-                    Text(viewModel.connectionStateName)
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundColor(.primary)
-                    
-                    Text(viewModel.connectionStateDescription)
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                }.padding(.vertical, 8)
+struct ModeCard: View {
+    let title: String
+    let desc: String
+    let icon: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 40))
+                    .foregroundColor(isSelected ? .white : .blue)
+                
+                Text(title)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(isSelected ? .white : .primary)
+                
+                Text(desc)
+                    .font(.system(size: 12))
+                    .foregroundColor(isSelected ? .white.opacity(0.8) : .secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(width: 200, height: 160)
+            .padding()
+            .background(isSelected ? Color.blue : Color(NSColor.controlBackgroundColor).opacity(0.6))
+            .cornerRadius(16)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(isSelected ? Color.blue : Color.gray.opacity(0.2), lineWidth: 2)
+            )
+            .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+        }
+        .buttonStyle(.plain)
+    }
+}
 
-                if viewModel.workMode == .idle {
-                    HStack {
-                        Button("配对新设备") {
-                            withAnimation { viewModel.start(mode: .pairing) }
-                        }.buttonStyle(.bordered)
-                        
-                        Button("启动工作") {
-                            withAnimation { viewModel.start(mode: .working) }
-                        }.buttonStyle(.borderedProminent)
-                    }.padding(.bottom, 20)
-                    
-                    // Binding Management
-                    if let bound = viewModel.boundDeviceHash {
-                        HStack {
-                            Text("已绑定: \(bound)").font(.system(size: 12))
-                            Spacer()
-                            Button("解绑") { viewModel.unbindDevice() }.controlSize(.mini)
-                        }.padding(.horizontal, 20).padding(.bottom, 10)
+// MARK: - Devices View
+struct DevicesView: View {
+    @EnvironmentObject var viewModel: MainViewModel
+    @State private var showPairingSheet = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack {
+                Text("设备管理")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                Spacer()
+                Button(action: {
+                    showPairingSheet = true
+                    viewModel.start(mode: .pairing)
+                }) {
+                    Label("配对新设备", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.workMode == .working)
+            }
+            .padding(.top, 40)
+            .padding(.horizontal, 40)
+            
+            // Bound Device Section
+            VStack(alignment: .leading, spacing: 12) {
+                Text("已授权绑定的设备")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.secondary)
+                
+                if !viewModel.boundDeviceHashes.isEmpty {
+                    ScrollView {
+                        VStack(spacing: 12) {
+                            ForEach(viewModel.boundDeviceHashes, id: \.self) { hash in
+                                HStack {
+                                    Image(systemName: "iphone")
+                                        .font(.system(size: 24))
+                                        .foregroundColor(.blue)
+                                    VStack(alignment: .leading) {
+                                        Text("绑定的手机")
+                                            .font(.system(size: 15, weight: .semibold))
+                                        Text("Hash: \(hash)")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                    Button("解绑") {
+                                        withAnimation { viewModel.unbindDevice(hash: hash) }
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(.red)
+                                }
+                                .padding()
+                                .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                                .cornerRadius(12)
+                            }
+                        }
                     }
+                    .frame(maxHeight: 300)
                 } else {
-                    Button("停止并断开") {
-                        withAnimation { viewModel.stopAll() }
+                    Text("当前未绑定任何设备，请先配对。")
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                        .cornerRadius(12)
+                }
+            }
+            .padding(.horizontal, 40)
+            
+            Spacer()
+        }
+        .sheet(isPresented: $showPairingSheet) {
+            PairingSheetView()
+                .environmentObject(viewModel)
+        }
+    }
+}
+
+// MARK: - Pairing Sheet
+struct PairingSheetView: View {
+    @EnvironmentObject var viewModel: MainViewModel
+    @Environment(\.dismiss) var dismiss
+    @State private var inputPin: String = ""
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            if viewModel.showPinDisplay {
+                Text("配对请求")
+                    .font(.system(size: 18, weight: .bold))
+                
+                if let reqDevice = viewModel.requestingDevice {
+                    Text("\(reqDevice.deviceName) 请求绑定。")
+                }
+                
+                Text("请在对方设备上输入以下配对码：")
+                    .padding(.top, 10)
+                
+                Text(viewModel.displayPin)
+                    .font(.system(size: 36, weight: .bold, design: .monospaced))
+                    .foregroundColor(.blue)
+                    .padding()
+                
+                Button("取消") {
+                    viewModel.stopAll()
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+            } else if viewModel.showPinInput {
+                Text("输入配对码")
+                    .font(.system(size: 18, weight: .bold))
+                
+                if let target = viewModel.inputTargetDevice {
+                    Text("请输入 \(target.deviceName) 上显示的 4 位配对码：")
+                }
+                
+                TextField("配对码", text: $inputPin)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 150)
+                    .multilineTextAlignment(.center)
+                    .font(.system(size: 24, weight: .bold, design: .monospaced))
+                
+                HStack(spacing: 20) {
+                    Button("取消") {
+                        viewModel.stopAll()
+                        dismiss()
                     }
                     .buttonStyle(.bordered)
-                    .tint(.red)
-                    .padding(.bottom, 10)
                     
-                    if viewModel.connectionStateName == "Transferring" {
-                        VStack {
-                            if viewModel.role == .sender {
-                                Button("发送模拟消息") {
-                                    viewModel.sendMockMessage("Hello from Mac: \(Date())")
-                                }
-                            } else {
-                                Text("最新收到消息：")
-                                    .font(.system(size: 12, weight: .bold))
-                                Text(viewModel.receivedMessage ?? "暂无消息")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
-                            }
-                        }.padding(.bottom, 10)
+                    Button("验证") {
+                        if inputPin.count == 4 {
+                            viewModel.verifyPin(pin: inputPin)
+                        }
                     }
-                    
-                    // Show Discovered Devices in Pairing Mode for Receiver
-                    if viewModel.workMode == .pairing && viewModel.role == .receiver && !viewModel.udpDevices.isEmpty {
-                        Text("局域网发现的设备：")
-                            .font(.system(size: 14, weight: .semibold))
-                            .padding(.top, 10)
-                        
+                    .buttonStyle(.borderedProminent)
+                    .disabled(inputPin.count != 4)
+                }
+            } else {
+                Text(viewModel.role == .receiver ? "寻找附近的发送端..." : "正在广播，请在手机端点击绑定")
+                    .font(.system(size: 18, weight: .bold))
+                    .padding(.top, 20)
+                
+                if viewModel.role == .receiver {
+                    if viewModel.udpDevices.isEmpty {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                            .padding()
+                    } else {
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(spacing: 12) {
                                 ForEach(viewModel.udpDevices, id: \.hash_) { device in
                                     HStack {
                                         VStack(alignment: .leading) {
-                                            Text(device.deviceName).font(.system(size: 14, weight: .bold))
-                                            Text("Role: \(device.role) | Hash: \(device.hash_)").font(.system(size: 11))
+                                            Text(device.deviceName)
+                                                .font(.system(size: 14, weight: .bold))
+                                            Text("Hash: \(device.hash_) | Role: \(device.role)")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.secondary)
                                         }
                                         Spacer()
-                                        Button("绑定") { 
-                                            viewModel.bindDevice(device: device) 
-                                            viewModel.stopAll()
-                                        }.controlSize(.mini)
+                                        Button("绑定此设备") {
+                                            viewModel.bindDevice(device: device)
+                                        }
+                                        .buttonStyle(.borderedProminent)
                                     }
-                                    .padding(8)
+                                    .padding()
                                     .background(Color.secondary.opacity(0.1))
-                                    .cornerRadius(6)
+                                    .cornerRadius(10)
                                 }
                             }
+                            .padding(.horizontal)
                         }
-                        .frame(maxHeight: 250)
-                        .padding(.horizontal, 20)
-                    } else if viewModel.workMode == .pairing && viewModel.role == .receiver {
-                        Text("请确保对方设备已在同一 Wi-Fi 下启动配对...")
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                            .padding(.top, 10)
+                        .frame(height: 250)
                     }
+                } else {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                        .padding()
                 }
+                
+                Button("取消并关闭") {
+                    viewModel.stopAll()
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                .padding(.bottom, 20)
             }
         }
-        .frame(minWidth: 400, minHeight: 600)
-    }
-
-    private var statusColor: Color {
-        switch viewModel.connectionStateName {
-        case "Idle": return Color.gray
-        case "Scanning", "Advertising": return Color.blue
-        case "Connecting": return Color.orange
-        case "Transferring": return Color.green
-        case "Disconnecting": return Color.red
-        default: return Color.gray
+        .frame(width: 400, height: 350)
+        .onChange(of: viewModel.boundDeviceHashes) { newValue in
+            dismiss()
         }
+    }
+}
+
+// MARK: - Visual Effect Wrapper
+struct VisualEffectView: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .hudWindow
+    var blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
+    
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        return view
+    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = material
+        nsView.blendingMode = blendingMode
     }
 }

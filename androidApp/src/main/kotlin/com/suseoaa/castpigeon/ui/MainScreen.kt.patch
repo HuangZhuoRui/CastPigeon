@@ -1,0 +1,125 @@
+--- /Users/vincent/Desktop/CastPigeon/androidApp/src/main/kotlin/com/suseoaa/castpigeon/ui/MainScreen.kt
++++ /Users/vincent/Desktop/CastPigeon/androidApp/src/main/kotlin/com/suseoaa/castpigeon/ui/MainScreen.kt
+@@ -8,6 +8,8 @@
+ import androidx.activity.result.contract.ActivityResultContracts
+ import androidx.compose.animation.*
+ import androidx.compose.animation.core.*
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.layout.*
+ import androidx.compose.foundation.lazy.LazyColumn
+@@ -21,6 +23,8 @@
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.draw.scale
+ import androidx.compose.ui.graphics.Brush
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.text.input.KeyboardType
++import androidx.compose.foundation.text.KeyboardOptions
+ import androidx.compose.ui.text.font.FontWeight
+@@ -69,6 +73,20 @@
+     val myName = remember { Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) ?: "Android Device" }
+     val myHashStr = remember(deviceHash) { deviceHash.joinToString("") { "%02X".format(it) } }
+ 
++    var pinDisplayInfo by remember { mutableStateOf<PinDisplayInfo?>(null) }
++    var pinInputDevice by remember { mutableStateOf<UdpDevice?>(null) }
++
++    LaunchedEffect(Unit) {
++        launch {
++            UdpDiscovery.pinDisplayEvent.collect { info ->
++                pinDisplayInfo = info
++            }
++        }
++        launch {
++            UdpDiscovery.pinInputEvent.collect { device ->
++                pinInputDevice = device
++            }
++        }
++    }
++
+     LaunchedEffect(workMode, role) {
+         if (workMode == WorkMode.Pairing && role == DeviceRole.Sender) {
+             UdpDiscovery.pairingSuccessEvent.collect { boundDevice ->
+@@ -79,6 +97,8 @@
+                 UdpDiscovery.stop()
+                 stateMachine.setWorkMode(WorkMode.Idle)
++                pinDisplayInfo = null
++                pinInputDevice = null
+                 android.widget.Toast.makeText(context, "已成功被 ${boundDevice.deviceName} 绑定！", android.widget.Toast.LENGTH_LONG).show()
+             }
+         }
+     }
+@@ -141,6 +161,46 @@
+         }
+     }
+ 
++    if (pinDisplayInfo != null) {
++        val info = pinDisplayInfo!!
++        AlertDialog(
++            onDismissRequest = { },
++            title = { Text("配对请求", fontWeight = FontWeight.Bold) },
++            text = { 
++                Column {
++                    Text("${info.requestingDevice.deviceName} 请求绑定。")
++                    Spacer(modifier = Modifier.height(8.dp))
++                    Text("请在对方设备上输入以下配对码：")
++                    Text(info.pin, fontSize = 36.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 16.dp))
++                }
++            },
++            confirmButton = {
++                TextButton(onClick = { pinDisplayInfo = null; UdpDiscovery.stop(); stateMachine.setWorkMode(WorkMode.Idle) }) { Text("取消") }
++            }
++        )
++    }
++
++    if (pinInputDevice != null) {
++        var inputPin by remember { mutableStateOf("") }
++        AlertDialog(
++            onDismissRequest = { },
++            title = { Text("输入配对码", fontWeight = FontWeight.Bold) },
++            text = {
++                Column {
++                    Text("请输入 ${pinInputDevice!!.deviceName} 上显示的 4 位配对码：")
++                    Spacer(modifier = Modifier.height(16.dp))
++                    OutlinedTextField(
++                        value = inputPin,
++                        onValueChange = { if (it.length <= 4) inputPin = it },
++                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
++                        singleLine = true
++                    )
++                }
++            },
++            confirmButton = {
++                Button(onClick = {
++                    if (inputPin.length == 4) {
++                        UdpDiscovery.verifyBinding(pinInputDevice!!.hash, inputPin)
++                    }
++                }) { Text("验证") }
++            },
++            dismissButton = {
++                TextButton(onClick = { pinInputDevice = null; UdpDiscovery.stop(); stateMachine.setWorkMode(WorkMode.Idle) }) { Text("取消") }
++            }
++        )
++    }
++
+     Scaffold(
+         bottomBar = {
+@@ -370,12 +430,9 @@
+                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                     onClick = {
+-                                        UdpDiscovery.confirmBinding(
+-                                            targetHash = device.hash, myRole = role.name,
+-                                            myName = myName, myHash = myHashStr
++                                        UdpDiscovery.requestBinding(
++                                            targetHash = device.hash,
++                                            targetDeviceName = device.deviceName,
++                                            targetRole = role.name,
++                                            targetIp = device.ipAddress
+                                         )
+-                                        val entry = "${device.deviceName}|${device.hash}"
+-                                        val newSet = boundMacs.toSet() + entry
+-                                        prefs.edit().putStringSet("BoundMacs", newSet).apply()
+-                                        if (!boundMacs.contains(entry)) boundMacs.add(entry)
+-                                        UdpDiscovery.stop()
+-                                        stateMachine.setWorkMode(WorkMode.Idle)
+                                     }
+                                 ) {

@@ -8,11 +8,41 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.suseoaa.castpigeon.shared.NotificationMessage
 import com.suseoaa.castpigeon.shared.NotificationRepository
+import com.suseoaa.castpigeon.AppManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Drawable
+import android.util.Base64
+import java.io.ByteArrayOutputStream
 
 class MyNotificationListener : NotificationListenerService() {
 
     companion object {
         private const val TAG = "NotiLinker"
+    }
+
+    private fun getAppIconBase64(packageName: String): String? {
+        try {
+            val iconDrawable: Drawable = packageManager.getApplicationIcon(packageName)
+            val bitmap = Bitmap.createBitmap(
+                iconDrawable.intrinsicWidth.coerceAtLeast(1),
+                iconDrawable.intrinsicHeight.coerceAtLeast(1),
+                Bitmap.Config.ARGB_8888
+            )
+            val canvas = Canvas(bitmap)
+            iconDrawable.setBounds(0, 0, canvas.width, canvas.height)
+            iconDrawable.draw(canvas)
+
+            val scaledBitmap = Bitmap.createScaledBitmap(bitmap, 144, 144, true)
+
+            val outputStream = ByteArrayOutputStream()
+            scaledBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+            val byteArray = outputStream.toByteArray()
+            return Base64.encodeToString(byteArray, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get icon for $packageName", e)
+            return null
+        }
     }
 
     override fun onListenerConnected() {
@@ -29,6 +59,13 @@ class MyNotificationListener : NotificationListenerService() {
         super.onNotificationPosted(sbn)
         try {
             val notification: Notification = sbn.notification
+            
+            // 过滤常驻通知和前台服务通知 (例如音乐播放器、系统状态提示等)
+            if (sbn.isOngoing || (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0 || 
+                (notification.flags and Notification.FLAG_FOREGROUND_SERVICE) != 0) {
+                return
+            }
+            
             val extras: Bundle? = notification.extras
 
             val title: String = if (extras != null) {
@@ -51,14 +88,22 @@ class MyNotificationListener : NotificationListenerService() {
             }
 
             val messageId = "${sbn.key}_${sbn.postTime}"
+            val iconBase64 = getAppIconBase64(sbn.packageName)
 
             val message = NotificationMessage(
                 id = messageId, appName = appName, title = title,
-                content = content, timestamp = sbn.postTime
+                content = content, timestamp = sbn.postTime,
+                iconBase64 = iconBase64
             )
 
-            // 将通知发布至全局总线，由专门的协调器（或ViewModel）接管广播引信的发射逻辑
-            NotificationRepository.publish(message)
+            //检查用户是否允许同步该应用的消息
+            if (AppManager.isAppAllowed(sbn.packageName)) {
+                Log.i(TAG, "Notification allowed and published: package=${sbn.packageName}, title=$title, content=$content")
+                //将通知发布至全局总线,由专门的协调器接管广播引信的发射逻辑
+                NotificationRepository.publish(message)
+            } else {
+                Log.i(TAG, "Notification blocked by settings: package=${sbn.packageName}")
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to process notification from ${sbn.packageName}", e)
