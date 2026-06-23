@@ -47,6 +47,7 @@ struct CastPigeonMacApp: App {
 // MARK: - Sidebar Item
 enum SidebarItem: String, CaseIterable, Identifiable {
     case dashboard = "仪表盘"
+    case history = "历史记录"
     case devices = "设备管理"
     
     var id: String { self.rawValue }
@@ -54,6 +55,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .dashboard: return "gauge.with.dots.needle.bottom.100percent"
+        case .history: return "clock"
         case .devices: return "macbook.and.iphone"
         }
     }
@@ -80,6 +82,8 @@ struct ContentView: View {
                 switch selection {
                 case .dashboard:
                     DashboardView()
+                case .history:
+                    HistoryView()
                 case .devices:
                     DevicesView()
                 case .none:
@@ -434,6 +438,137 @@ struct PairingSheetView: View {
         .onChange(of: viewModel.boundDeviceHashes) { newValue in
             dismiss()
         }
+    }
+}
+
+// MARK: - History View
+struct HistoryView: View {
+    @EnvironmentObject var viewModel: MainViewModel
+    @State private var messages: [NotificationMessage] = []
+    @State private var selectedDeviceHash: String = "All"
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("消息历史记录")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                Spacer()
+                
+                Picker("设备:", selection: $selectedDeviceHash) {
+                    Text("全部设备").tag("All")
+                    ForEach(viewModel.boundDeviceHashes, id: \.self) { hash in
+                        Text("Hash: \(hash)").tag(hash)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 200)
+                .onChange(of: selectedDeviceHash) { _ in
+                    loadMessages()
+                }
+                
+                Button(action: {
+                    loadMessages()
+                }) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 8)
+            }
+            .padding(.horizontal, 40)
+            .padding(.top, 40)
+            .padding(.bottom, 20)
+            
+            if messages.isEmpty {
+                VStack {
+                    Spacer()
+                    Image(systemName: "tray")
+                        .font(.system(size: 64))
+                        .foregroundColor(.secondary)
+                    Text("暂无消息记录")
+                        .font(.system(size: 16))
+                        .foregroundColor(.secondary)
+                        .padding(.top, 16)
+                    Spacer()
+                }
+            } else {
+                List(messages, id: \.id) { msg in
+                    HistoryMessageRow(msg: msg)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 20)
+                }
+                .listStyle(.plain)
+            }
+        }
+        .onAppear {
+            loadMessages()
+        }
+    }
+    
+    private func loadMessages() {
+        let hash: String? = selectedDeviceHash == "All" ? nil : selectedDeviceHash
+        messages = DatabaseManager.shared.getMessages(for: hash)
+    }
+}
+
+struct HistoryMessageRow: View {
+    let msg: NotificationMessage
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            // Icon
+            if let iconURL = DatabaseManager.shared.getIconURL(for: msg.appName),
+               let nsImage = NSImage(contentsOf: iconURL) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 48, height: 48)
+                    .cornerRadius(8)
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(NSColor.controlBackgroundColor))
+                        .frame(width: 48, height: 48)
+                    Text(String(msg.appName.prefix(1)))
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .center) {
+                    Text(msg.appName)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.blue)
+                    Spacer()
+                    Text(formatTimestamp(msg.timestamp))
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                
+                if !msg.title.isEmpty {
+                    Text(msg.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(1)
+                }
+                
+                if !msg.content.isEmpty {
+                    Text(msg.content)
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                        .lineLimit(3)
+                }
+            }
+        }
+        .padding(16)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+        .cornerRadius(12)
+    }
+    
+    private func formatTimestamp(_ ms: Int64) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm:ss"
+        return formatter.string(from: date)
     }
 }
 

@@ -38,6 +38,7 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
     private var centralManager: CBCentralManager!
     private var peripheralManager: CBPeripheralManager!
     private var connectedPeripherals: [UUID: CBPeripheral] = [:]
+    private var peripheralHashes: [UUID: String] = [:]
     
     // Server state
     private var gattCharacteristic: CBMutableCharacteristic?
@@ -312,6 +313,7 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
                     updateState(name: "Connecting", desc: "发现工作广播 [\(hash)]，发起连接...")
                     logDebug("发现目标设备[\(hash)]，发起连接...")
                     connectedPeripherals[peripheral.identifier] = peripheral
+                    peripheralHashes[peripheral.identifier] = hash
                     peripheral.delegate = self
                     central.connect(peripheral, options: nil)
                 }
@@ -400,7 +402,8 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
                     if let msg = String(data: completeData, encoding: .utf8) {
                         DispatchQueue.main.async {
                             self.receivedMessage = msg
-                            self.showNotification(from: completeData)
+                            let hash = self.peripheralHashes[peripheral.identifier] ?? "unknown"
+                            self.showNotification(from: completeData, deviceHash: hash)
                         }
                     }
                 }
@@ -410,11 +413,14 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
         }
     }
     
-    private func showNotification(from data: Data) {
+    private func showNotification(from data: Data, deviceHash: String) {
         do {
             let decoder = JSONDecoder()
             let message = try decoder.decode(NotificationMessage.self, from: data)
             logDebug("成功解码通知: \(message.title)")
+            
+            // Insert to database
+            DatabaseManager.shared.insertMessage(message, deviceHash: deviceHash)
             
             let content = UNMutableNotificationContent()
             content.title = message.title

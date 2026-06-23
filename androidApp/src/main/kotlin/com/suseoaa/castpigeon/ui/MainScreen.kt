@@ -47,6 +47,7 @@ import com.suseoaa.castpigeon.service.BleForegroundService
 // 底部导航项
 enum class AppTab(val title: String) {
     Dashboard("状态看板"),
+    History("历史记录"),
     Settings("同步设置")
 }
 
@@ -285,6 +286,12 @@ fun MainScreen(
                     label = { Text(AppTab.Dashboard.title) }
                 )
                 NavigationBarItem(
+                    selected = currentTab == AppTab.History,
+                    onClick = { currentTab = AppTab.History },
+                    icon = { Text("🕒", fontSize = 20.sp) },
+                    label = { Text(AppTab.History.title) }
+                )
+                NavigationBarItem(
                     selected = currentTab == AppTab.Settings,
                     onClick = { currentTab = AppTab.Settings },
                     icon = { Text("⚙️", fontSize = 20.sp) },
@@ -323,6 +330,7 @@ fun MainScreen(
                             }
                         }
                     )
+                    AppTab.History -> HistoryScreen()
                     AppTab.Settings -> SettingsContent()
                 }
             }
