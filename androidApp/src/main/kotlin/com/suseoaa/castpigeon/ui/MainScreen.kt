@@ -1,3 +1,4 @@
+@file:Suppress("UNUSED_VARIABLE", "UNUSED_PARAMETER", "USELESS_CAST", "RedundantRequireNotNullCall", "RemoveRedundantQualifierName", "UNUSED_IMPORT", "CanBeVal")
 package com.suseoaa.castpigeon.ui
 
 import android.Manifest
@@ -38,12 +39,20 @@ import com.suseoaa.castpigeon.shared.crypto.Crypto
 import kotlinx.serialization.encodeToString
 import com.suseoaa.castpigeon.service.AppConnectionManager
 import androidx.core.content.edit
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import dev.chrisbanes.haze.hazeSource
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.Smartphone
 
 // 底部导航项
-enum class AppTab(val title: String) {
-    Dashboard("状态看板"),
-    History("历史记录"),
-    Settings("同步设置")
+enum class AppTab(val title: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    Dashboard("状态看板", Icons.Default.Home),
+    History("历史记录", Icons.Default.History),
+    Settings("同步设置", Icons.Default.Settings)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,8 +69,27 @@ fun MainScreen(
     val role by stateMachine.role.collectAsState()
     val workMode by stateMachine.workMode.collectAsState()
     val pairingDeviceName by stateMachine.pairingDeviceName.collectAsState()
+    val connectedDeviceName by stateMachine.connectedDeviceName.collectAsState()
     
-    val context = LocalContext.current
+    val hazeState = remember { dev.chrisbanes.haze.HazeState() }
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(initialPage = AppTab.entries.indexOf(currentTab), pageCount = { AppTab.entries.size })
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(pagerState.settledPage) {
+        val targetTab = AppTab.entries[pagerState.settledPage]
+        if (targetTab != currentTab) {
+            currentTab = targetTab
+        }
+    }
+
+    LaunchedEffect(currentTab) {
+        val targetIndex = AppTab.entries.indexOf(currentTab)
+        if (pagerState.currentPage != targetIndex) {
+            pagerState.animateScrollToPage(targetIndex)
+        }
+    }
+    
+    val context = LocalContext.current as android.content.Context
     
     // 生成设备唯一标识Hash(取前4字节)
     @android.annotation.SuppressLint("HardwareIds")
@@ -264,60 +292,52 @@ fun MainScreen(
         )
     }
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)) {
-                NavigationBarItem(
-                    selected = currentTab == AppTab.Dashboard,
-                    onClick = { currentTab = AppTab.Dashboard },
-                    icon = { Text("📊", fontSize = 20.sp) },
-                    label = { Text(AppTab.Dashboard.title) }
-                )
-                NavigationBarItem(
-                    selected = currentTab == AppTab.History,
-                    onClick = { currentTab = AppTab.History },
-                    icon = { Text("🕒", fontSize = 20.sp) },
-                    label = { Text(AppTab.History.title) }
-                )
-                NavigationBarItem(
-                    selected = currentTab == AppTab.Settings,
-                    onClick = { currentTab = AppTab.Settings },
-                    icon = { Text("⚙️", fontSize = 20.sp) },
-                    label = { Text(AppTab.Settings.title) }
-                )
-            }
-        }
-    ) { paddingValues ->
-        Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
-            AnimatedContent(
-                targetState = currentTab,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(300)) togetherWith fadeOut(animationSpec = tween(300))
-                }, label = "TabSwitch"
-            ) { tab ->
-                when (tab) {
-                    AppTab.Dashboard -> DashboardContent(
-                        stateMachine = stateMachine,
-                        blePeripheral = blePeripheral,
-                        bleCentral = bleCentral,
-                        role = role,
-                        workMode = workMode,
-                        connectionState = connectionState,
-                        boundMacs = boundMacs,
-                        prefs = prefs,
-                        myHashStr = myHashStr,
-                        receivedMockMessage = receivedMockMessage,
-                        onAction = { action ->
-                            if (hasAllPermissions()) {
-                                startBluetoothAction(stateMachine, blePeripheral, bleCentral, role, action, deviceHash, boundMacs, myName)
-                            } else {
-                                pendingAction = action
-                                permissionLauncher.launch(permissionsToRequest)
+    MiuixTheme {
+        com.suseoaa.castpigeon.ui.component.sukisu.LiquidGlassBackdropWrapper(
+            isLiquidGlassTabbarEnabled = true,
+            liquidGlassTabbarStyle = 2,
+            selectedIndex = { AppTab.entries.indexOf(currentTab) },
+            onNavigate = { 
+                currentTab = AppTab.entries[it] 
+            },
+            onBottomBarHeightChanged = {},
+            modifier = Modifier.fillMaxSize()
+        ) { backdropModifier ->
+            androidx.compose.foundation.pager.HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(backdropModifier)
+                    .hazeSource(state = hazeState),
+                beyondViewportPageCount = AppTab.entries.size - 1,
+            ) { page ->
+                val tab = AppTab.entries[page]
+                Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    when (tab) {
+                        AppTab.Dashboard -> DashboardContent(
+                            stateMachine = stateMachine,
+                            blePeripheral = blePeripheral,
+                            bleCentral = bleCentral,
+                            role = role,
+                            workMode = workMode,
+                            connectionState = connectionState,
+                            boundMacs = boundMacs,
+                            prefs = prefs,
+                            myHashStr = myHashStr,
+                            receivedMockMessage = receivedMockMessage,
+                            connectedDeviceName = connectedDeviceName,
+                            onAction = { action ->
+                                if (hasAllPermissions()) {
+                                    startBluetoothAction(stateMachine, blePeripheral, bleCentral, role, action, deviceHash, boundMacs, myName)
+                                } else {
+                                    pendingAction = action
+                                    permissionLauncher.launch(permissionsToRequest)
+                                }
                             }
-                        }
-                    )
-                    AppTab.History -> HistoryScreen()
-                    AppTab.Settings -> SettingsContent()
+                        )
+                        AppTab.History -> HistoryScreen()
+                        AppTab.Settings -> SettingsContent()
+                    }
                 }
             }
         }
@@ -336,9 +356,10 @@ fun DashboardContent(
     prefs: android.content.SharedPreferences,
     myHashStr: String,
     receivedMockMessage: String?,
+    connectedDeviceName: String?,
     onAction: (WorkMode) -> Unit
 ) {
-    val context = LocalContext.current
+    val context = LocalContext.current as android.content.Context
     val isNotificationListenerEnabled = remember(workMode, role) { 
         NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName) 
     }
@@ -519,20 +540,36 @@ fun DashboardContent(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(mac.substringBefore("|"), fontWeight = FontWeight.SemiBold)
-                                        Text("Hash: ${mac.substringAfter("|", "Unknown")}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    val parts = mac.split("|")
+                                    val name = if (parts.isNotEmpty()) parts[0] else "未知设备"
+                                    val hash = if (parts.size > 1) parts[1] else "Unknown"
+                                    val isOnline = (connectionState == ConnectionState.Transferring && connectedDeviceName == name)
+
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Computer, contentDescription = "Mac", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(name, fontWeight = FontWeight.SemiBold)
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Box(modifier = Modifier.size(8.dp).background(if (isOnline) Color.Green else Color.Gray, shape = RoundedCornerShape(4.dp)))
+                                            }
+                                            Text("Hash: $hash", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
-                                    TextButton(onClick = {
-                                        editingMac = mac
-                                        newDeviceName = mac.substringBefore("|")
-                                    }) { Text("重命名", color = MaterialTheme.colorScheme.primary) }
                                     
-                                    TextButton(onClick = {
-                                        val newSet = boundMacs.toSet() - mac
-                                        prefs.edit { putStringSet("BoundMacs", newSet) }
-                                        boundMacs.remove(mac)
-                                    }) { Text("解绑", color = MaterialTheme.colorScheme.error) }
+                                    Row {
+                                        TextButton(onClick = {
+                                            editingMac = mac
+                                            newDeviceName = name
+                                        }) { Text("重命名") }
+                                        
+                                        TextButton(onClick = {
+                                            val newSet = boundMacs.toSet() - mac
+                                            prefs.edit { putStringSet("BoundMacs", newSet) }
+                                            boundMacs.remove(mac)
+                                        }) { Text("解绑", color = MaterialTheme.colorScheme.error) }
+                                    }
                                 }
                             }
                         }

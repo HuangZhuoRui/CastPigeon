@@ -26,6 +26,14 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.uiToolingPreview)
     debugImplementation(libs.compose.uiTooling)
+    
+    implementation("androidx.compose.material:material-icons-extended:1.6.0")
+    
+    implementation(libs.miuix.blur)
+    implementation(libs.miuix.ui)
+    
+    implementation(libs.haze)
+    implementation(libs.haze.materials)
 }
 
 android {

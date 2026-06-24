@@ -21,11 +21,13 @@ class ConnectionStateMachine(
     private val _role = MutableStateFlow(DeviceRole.Sender)
     private val _workMode = MutableStateFlow(WorkMode.Idle)
     private val _pairingDeviceName = MutableStateFlow<String?>(null)
+    private val _connectedDeviceName = MutableStateFlow<String?>(null)
     
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
     val role: StateFlow<DeviceRole> = _role.asStateFlow()
     val workMode: StateFlow<WorkMode> = _workMode.asStateFlow()
     val pairingDeviceName: StateFlow<String?> = _pairingDeviceName.asStateFlow()
+    val connectedDeviceName: StateFlow<String?> = _connectedDeviceName.asStateFlow()
 
     private var timeoutJob: Job? = null
 
@@ -60,6 +62,12 @@ class ConnectionStateMachine(
             _pairingDeviceName.value = deviceName
         } else {
             _pairingDeviceName.value = null
+        }
+        
+        if (newState == ConnectionState.Transferring) {
+            _connectedDeviceName.value = deviceName
+        } else if (newState == ConnectionState.Idle || newState == ConnectionState.Disconnecting) {
+            _connectedDeviceName.value = null
         }
         
         //取消之前可能存在的超时任务

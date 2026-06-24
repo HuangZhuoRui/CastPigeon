@@ -285,14 +285,23 @@ struct DevicesView: View {
                                 let parts = entry.components(separatedBy: "|")
                                 let name = parts.count > 1 ? parts[0] : "绑定的设备"
                                 let hash = parts.count > 1 ? parts[1] : entry
+                                let isOnline = viewModel.connectedDeviceHashes.contains(hash)
                                 
                                 HStack {
                                     Image(systemName: "iphone")
                                         .font(.system(size: 24))
                                         .foregroundColor(.blue)
                                     VStack(alignment: .leading) {
-                                        Text(name)
-                                            .font(.system(size: 15, weight: .semibold))
+                                        HStack {
+                                            Text(name)
+                                                .font(.system(size: 15, weight: .semibold))
+                                            Circle()
+                                                .fill(isOnline ? Color.green : Color.gray)
+                                                .frame(width: 8, height: 8)
+                                            Text(isOnline ? "在线" : "离线")
+                                                .font(.system(size: 10))
+                                                .foregroundColor(isOnline ? .green : .gray)
+                                        }
                                         Text("Hash: \(hash)")
                                             .font(.system(size: 12))
                                             .foregroundColor(.secondary)

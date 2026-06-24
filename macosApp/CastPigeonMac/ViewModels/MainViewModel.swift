@@ -2,6 +2,7 @@ import Foundation
 import CoreBluetooth
 import UserNotifications
 import Combine
+import AppKit
 
 final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate, CBPeripheralManagerDelegate {
     @Published var role: DeviceRole = {
@@ -26,6 +27,7 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
     
     @Published var boundDeviceHashes: [String] = UserDefaults.standard.stringArray(forKey: "BoundDeviceHashes") ?? []
     @Published var discoveredDevices: Set<String> = []
+    @Published var connectedDeviceHashes: Set<String> = []
     @Published var udpDevices: [UdpDevice] = []
     
     @Published var showPinDisplay: Bool = false
@@ -57,6 +59,11 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
         if !boundDeviceHashes.isEmpty {
             self.workMode = .working
         }
+        
+        // 监听 macOS 从睡眠中唤醒的事件，用于恢复底层挂起的蓝牙连接
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(handleSystemWake), name: NSWorkspace.didWakeNotification, object: nil)
+        // 监听 macOS 即将睡眠的事件，主动断开所有蓝牙以避免 Android 假连
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(handleSystemSleep), name: NSWorkspace.willSleepNotification, object: nil)
     }
     
     var myHash: String {
@@ -256,8 +263,39 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         logDebug("蓝牙中心设备状态更新: \(central.state.rawValue)")
         if central.state == .poweredOn && workMode == .working && role == .receiver {
-            logDebug("蓝牙已开启，且处于工作模式，尝试开启扫描")
+            logDebug("蓝牙已开启，尝试恢复挂起的连接并开启扫描")
+            for (_, peripheral) in connectedPeripherals {
+                if peripheral.state != .connected {
+                    centralManager.connect(peripheral, options: nil)
+                }
+            }
             startScan()
+        }
+    }
+    
+    @objc private func handleSystemWake() {
+        logDebug("系统从睡眠中唤醒，检测蓝牙状态...")
+        if workMode == .working {
+            if role == .receiver && centralManager.state == .poweredOn {
+                logDebug("唤醒后恢复所有的蓝牙连接与扫描...")
+                for (_, peripheral) in connectedPeripherals {
+                    if peripheral.state != .connected {
+                        centralManager.connect(peripheral, options: nil)
+                    }
+                }
+                startScan()
+            } else if role == .sender && peripheralManager.state == .poweredOn {
+                startAdvertising()
+            }
+        }
+    }
+    
+    @objc private func handleSystemSleep() {
+        logDebug("系统即将休眠，主动断开所有蓝牙连接...")
+        if workMode == .working && role == .receiver {
+            for (_, peripheral) in connectedPeripherals {
+                centralManager.cancelPeripheralConnection(peripheral)
+            }
         }
     }
     
@@ -336,17 +374,30 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         updateState(name: "Handshake", desc: "底层连接建立，发起握手...")
         logDebug("设备已连接，发现服务...")
+        if let hash = peripheralHashes[peripheral.identifier] {
+            DispatchQueue.main.async {
+                self.connectedDeviceHashes.insert(hash)
+            }
+        }
         peripheral.discoverServices([serviceUuid])
     }
     
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         logDebug("设备连接失败: \(error?.localizedDescription ?? "未知错误")")
         connectedPeripherals.removeValue(forKey: peripheral.identifier)
+        if let hash = peripheralHashes[peripheral.identifier] {
+            DispatchQueue.main.async { self.connectedDeviceHashes.remove(hash) }
+        }
     }
     
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         self.receiveBuffers.removeValue(forKey: peripheral.identifier)
         logDebug("设备已断开: \(error?.localizedDescription ?? "未知")")
+        
+        if let hash = peripheralHashes[peripheral.identifier] {
+            DispatchQueue.main.async { self.connectedDeviceHashes.remove(hash) }
+        }
+        
         if workMode == .working {
             updateState(name: "Connecting", desc: "连接中断，后台挂起重新监听该设备...")
             // CoreBluetooth的黑科技：直接对已断开的外设发起connect，系统会自动在后台超低功耗死等，一旦设备再次广播瞬间连上

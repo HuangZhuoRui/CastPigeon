@@ -98,6 +98,7 @@ actual class BlePeripheral actual constructor() {
         ) {
             super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
             if (characteristic?.uuid == handshakeCharUuid) {
+                if (device == null) return
                 // 如果是工作模式下的握手包 (0x01)，直接进入传输期，解决首次消息延迟
                 if (value != null && value.size == 1 && value[0] == 0x01.toByte()) {
                     if (responseNeeded) {
@@ -130,6 +131,7 @@ actual class BlePeripheral actual constructor() {
             value: ByteArray?
         ) {
             super.onDescriptorWriteRequest(device, requestId, descriptor, preparedWrite, responseNeeded, offset, value)
+            if (device == null) return
             if (responseNeeded) {
                 @SuppressLint("MissingPermission")
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value)
@@ -221,10 +223,6 @@ actual class BlePeripheral actual constructor() {
     @SuppressLint("MissingPermission")
     actual fun stopAdvertising() {
         advertiser?.stopAdvertising(advertiseCallback)
-        // 停止广播时必须彻底清理服务并关闭 Server，防止服务堆积（尤其是联发科/小米等魔改蓝牙栈）
-        gattServer?.clearServices()
-        gattServer?.close()
-        gattServer = null
     }
 
     @SuppressLint("MissingPermission")
