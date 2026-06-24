@@ -74,18 +74,29 @@ fun MainScreen(
     val hazeState = remember { dev.chrisbanes.haze.HazeState() }
     val pagerState = androidx.compose.foundation.pager.rememberPagerState(initialPage = AppTab.entries.indexOf(currentTab), pageCount = { AppTab.entries.size })
     val scope = rememberCoroutineScope()
+    var scrollJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var isFirstComposition by remember { mutableStateOf(true) }
 
     LaunchedEffect(pagerState.settledPage) {
-        val targetTab = AppTab.entries[pagerState.settledPage]
-        if (targetTab != currentTab) {
-            currentTab = targetTab
+        if (isFirstComposition) {
+            isFirstComposition = false
+            return@LaunchedEffect
+        }
+        if (scrollJob?.isActive != true) {
+            val targetTab = AppTab.entries[pagerState.settledPage]
+            if (targetTab != currentTab) {
+                currentTab = targetTab
+            }
         }
     }
 
     LaunchedEffect(currentTab) {
         val targetIndex = AppTab.entries.indexOf(currentTab)
         if (pagerState.currentPage != targetIndex) {
-            pagerState.animateScrollToPage(targetIndex)
+            scrollJob?.cancel()
+            scrollJob = launch {
+                pagerState.animateScrollToPage(targetIndex)
+            }
         }
     }
     
