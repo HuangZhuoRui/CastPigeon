@@ -122,6 +122,9 @@ class SwiftUdpDiscovery {
         let parts = msg.components(separatedBy: "|")
         
         if parts.count >= 4 && parts[0] == "CP_PAIR" {
+            if parts[3] == self.myPairingHash {
+                return
+            }
             let filePort = parts.count >= 5 ? Int(parts[4]) : nil
             let deviceType = parts.count >= 6 ? parts[5] : "Unknown"
             let newDevice = UdpDevice(deviceName: parts[2], role: parts[1], hash_: parts[3], ip: ipString, filePort: filePort.flatMap { $0 > 0 ? $0 : nil }, deviceType: deviceType)
@@ -137,6 +140,7 @@ class SwiftUdpDiscovery {
                 let reqRole = parts[2]
                 let reqName = parts[3]
                 let reqHash = parts[4]
+                if reqHash == self.myPairingHash { return }
                 let requestingDevice = UdpDevice(deviceName: reqName, role: reqRole, hash_: reqHash, ip: ipString)
                 
                 let pin = String(format: "%04d", Int.random(in: 1000...9999))
@@ -154,6 +158,7 @@ class SwiftUdpDiscovery {
                 let reqRole = parts[2]
                 let reqName = parts[3]
                 let reqHash = parts[4]
+                if reqHash == self.myPairingHash { return }
                 let receivedPin = parts[5]
                 let requestingDevice = UdpDevice(deviceName: reqName, role: reqRole, hash_: reqHash, ip: ipString)
                 
@@ -199,6 +204,7 @@ class SwiftUdpDiscovery {
     
     func requestBinding(targetHash: String, targetDeviceName: String, targetRole: String, targetIp: String? = nil) {
         guard let myRole = myRole, let myName = myName, let myHash = myPairingHash else { return }
+        guard targetHash != myHash else { return }
         
         sendUdpMessage("CP_BIND_REQUEST|\(targetHash)|\(myRole)|\(myName)|\(myHash)", targetIp: targetIp)
         

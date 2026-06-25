@@ -14,7 +14,12 @@ data class UdpDevice(
     val hash: String,
     val ipAddress: String,
     val filePort: Int? = null,
-    val deviceType: String = "Unknown"
+    val deviceType: String = "Unknown",
+    val prefixLength: Int? = null,
+    val gateway: String? = null,
+    val networkId: String? = null,
+    val lanReachable: Boolean = false,
+    val lastSeen: Long = 0L
 )
 
 data class PinDisplayInfo(
@@ -79,6 +84,9 @@ object UdpDiscovery {
                         val role = parts[1]
                         val name = parts[2]
                         val hash = parts[3]
+                        if (hash == myPairingHash) {
+                            continue
+                        }
                         val filePort = parts.getOrNull(4)?.toIntOrNull()?.takeIf { it > 0 }
                         val deviceType = parts.getOrNull(5) ?: "Unknown"
                         val ip = sanitizeEndpointAddress(datagram.address.toString())
@@ -95,6 +103,7 @@ object UdpDiscovery {
                             val reqRole = parts[2]
                             val reqName = parts[3]
                             val reqHash = parts[4]
+                            if (reqHash == myPairingHash) continue
                             val ip = sanitizeEndpointAddress(datagram.address.toString())
                             val requestingDevice = UdpDevice(reqName, reqRole, reqHash, ip)
                             
@@ -116,6 +125,7 @@ object UdpDiscovery {
                             val reqRole = parts[2]
                             val reqName = parts[3]
                             val reqHash = parts[4]
+                            if (reqHash == myPairingHash) continue
                             val receivedPin = parts[5]
                             val ip = sanitizeEndpointAddress(datagram.address.toString())
                             val requestingDevice = UdpDevice(reqName, reqRole, reqHash, ip)
@@ -161,9 +171,20 @@ object UdpDiscovery {
     }
 
     fun upsertDiscoveredDevice(device: UdpDevice) {
+        if (device.hash == myPairingHash) return
         _discoveredDevices.update { devices ->
             devices.filterNot { it.hash == device.hash }.toSet() + device
         }
+    }
+
+    fun removeDiscoveredDevice(hash: String) {
+        _discoveredDevices.update { devices ->
+            devices.filterNot { it.hash == hash }.toSet()
+        }
+    }
+
+    fun clearDiscoveredDevices() {
+        _discoveredDevices.value = emptySet()
     }
     
     fun startBroadcasting(role: String, deviceName: String, hash: String, filePort: Int? = null, deviceType: String = "Android") {
@@ -205,6 +226,7 @@ object UdpDiscovery {
     // 主动点击绑定时调用
     fun requestBinding(targetHash: String, targetDeviceName: String, targetRole: String, targetIp: String) {
         if (myRole == null || myName == null || myPairingHash == null) return
+        if (targetHash == myPairingHash) return
         
         // 发送 BIND_REQUEST
         sendUdpMessage("CP_BIND_REQUEST|$targetHash|$myRole|$myName|$myPairingHash")

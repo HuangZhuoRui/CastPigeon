@@ -3,6 +3,7 @@ import CoreBluetooth
 import UserNotifications
 import Combine
 import AppKit
+import Network
 
 final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate, CBPeripheralManagerDelegate {
     @Published var role: DeviceRole = {
@@ -54,6 +55,9 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
     private var controlCharacteristics: [UUID: CBCharacteristic] = [:]
     private var lastCapabilitySentAt: Date = .distantPast
     private var cancellables: Set<AnyCancellable> = []
+    private let pathMonitor = NWPathMonitor()
+    private let pathMonitorQueue = DispatchQueue(label: "CastPigeon.NetworkMonitor")
+    private var lastNetworkSignature: String? = nil
     
     // Server state
     private var gattCharacteristic: CBMutableCharacteristic?
@@ -63,6 +67,29 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
     private let serviceUuid = CBUUID(string: "A1B2C3D4-E5F6-47A8-B9C0-D1E2F3A4B5C6")
     private let charUuid = CBUUID(string: "A1B2C3D4-E5F6-47A8-B9C0-D1E2F3A4B5C7")
     private let handshakeCharUuid = CBUUID(string: "A1B2C3D4-E5F6-47A8-B9C0-D1E2F3A4B5C8")
+
+    private struct LocalNetworkCapability {
+        let ip: String
+        let prefixLength: Int
+        let gateway: String?
+        let networkId: String
+
+        var signature: String {
+            "\(ip)/\(prefixLength)|\(gateway ?? "")|\(networkId)"
+        }
+    }
+
+    private struct PeerNetworkCapability {
+        let deviceName: String
+        let hash: String
+        let deviceType: String
+        let ip: String
+        let prefixLength: Int?
+        let gateway: String?
+        let filePort: Int?
+        let networkId: String?
+        let timestamp: Int64
+    }
 
     private func sortUdpDevices(_ devices: [UdpDevice]) -> [UdpDevice] {
         devices.sorted {
@@ -101,6 +128,7 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(handleSystemWake), name: NSWorkspace.didWakeNotification, object: nil)
         // 监听 macOS 即将睡眠的事件，主动断开所有蓝牙以避免 Android 假连
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(handleSystemSleep), name: NSWorkspace.willSleepNotification, object: nil)
+        startNetworkMonitoring()
     }
     
     var myHash: String {
@@ -111,12 +139,25 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
 
     private var localCapabilityPayload: String {
         let name = Host.current().localizedName ?? "Mac"
-        let ip = localIPv4Address() ?? ""
         let port = LanFileTransferManager.shared.serverPort
-        return "CAP|\(name)|\(myHash)|\(ip)|\(port)|Mac"
+        let network = localNetworkCapability()
+        return [
+            "CAP",
+            "2",
+            name,
+            myHash,
+            "Mac",
+            network?.ip ?? "",
+            network.map { String($0.prefixLength) } ?? "",
+            network?.gateway ?? "",
+            String(port),
+            network?.networkId ?? "",
+            String(Int64(Date().timeIntervalSince1970 * 1000))
+        ].joined(separator: "|")
     }
 
     func bindDevice(device: UdpDevice) {
+        guard device.hash_ != myHash else { return }
         SwiftUdpDiscovery.shared.requestBinding(
             targetHash: device.hash_,
             targetDeviceName: device.deviceName,
@@ -147,10 +188,12 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
         workMode = mode
         if mode == .pairing {
             SwiftUdpDiscovery.shared.onDeviceDiscovered = { [weak self] devices in
-                self?.udpDevices = devices
+                guard let self else { return }
+                self.udpDevices = self.sortUdpDevices(devices.filter { $0.hash_ != self.myHash })
             }
             SwiftUdpDiscovery.shared.onPairingSuccess = { [weak self] boundDevice in
                 guard let self = self, self.workMode == .pairing else { return }
+                guard boundDevice.hash_ != self.myHash else { return }
                 let entry = "\(boundDevice.deviceName)|\(boundDevice.hash_)"
                 if !self.boundDeviceHashes.contains(where: { $0.hasSuffix("|\(boundDevice.hash_)") || $0 == boundDevice.hash_ }) {
                     self.boundDeviceHashes.append(entry)
@@ -174,7 +217,8 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
                 self?.showPinInput = true
             }
             SwiftUdpDiscovery.shared.onDeviceDiscovered = { [weak self] devices in
-                self?.udpDevices = devices
+                guard let self else { return }
+                self.udpDevices = self.sortUdpDevices(devices.filter { $0.hash_ != self.myHash })
             }
             
             if role == .receiver {
@@ -188,7 +232,8 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
             }
         } else {
             SwiftUdpDiscovery.shared.onDeviceDiscovered = { [weak self] devices in
-                self?.udpDevices = devices
+                guard let self else { return }
+                self.udpDevices = self.sortUdpDevices(devices.filter { $0.hash_ != self.myHash })
             }
             SwiftUdpDiscovery.shared.startBroadcasting(role: role.rawValue, deviceName: Host.current().localizedName ?? "Mac", hash: myHash, filePort: LanFileTransferManager.shared.serverPort, deviceType: "Mac")
             if role == .receiver {
@@ -278,6 +323,11 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
                 }
                 if let data = request.value, let text = String(data: data, encoding: .utf8), text.hasPrefix("CAP|") {
                     handleCapabilityPayload(text)
+                    peripheralManager.respond(to: request, withResult: .success)
+                    return
+                }
+                if let data = request.value, let text = String(data: data, encoding: .utf8), text.hasPrefix("CAP_LOST|") {
+                    handleCapabilityLost(text)
                     peripheralManager.respond(to: request, withResult: .success)
                     return
                 }
@@ -375,8 +425,8 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
         }
     }
 
-    private func sendLocalCapability(reason: String) {
-        guard Date().timeIntervalSince(lastCapabilitySentAt) > 2 else { return }
+    private func sendLocalCapability(reason: String, force: Bool = false) {
+        guard force || Date().timeIntervalSince(lastCapabilitySentAt) > 2 else { return }
         lastCapabilitySentAt = Date()
         sendControlPayload(localCapabilityPayload)
         logDebug("\(reason)，已发送能力信息")
@@ -397,26 +447,97 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
     }
 
     private func handleCapabilityPayload(_ payload: String) {
-        let parts = payload.components(separatedBy: "|")
-        guard parts.count >= 6 else { return }
-        let port = Int(parts[4])
-        let device = UdpDevice(
-            deviceName: parts[1],
-            role: "Peer",
-            hash_: parts[2],
-            ip: parts[3].isEmpty ? nil : parts[3],
-            filePort: port,
-            deviceType: parts[5].isEmpty ? "Unknown" : parts[5]
-        )
-        DispatchQueue.main.async {
-            self.udpDevices.removeAll { $0.hash_ == device.hash_ }
-            self.udpDevices.append(device)
-            self.udpDevices = self.sortUdpDevices(self.udpDevices)
+        guard let capability = parsePeerCapability(payload) else { return }
+        guard capability.hash != myHash else { return }
+        guard !capability.ip.isEmpty, let port = capability.filePort else {
+            DispatchQueue.main.async {
+                self.udpDevices.removeAll { $0.hash_ == capability.hash }
+            }
+            return
         }
-        logDebug("收到 BLE 能力信息: \(device.deviceName) \(device.ip ?? "-"):\(device.filePort.map(String.init) ?? "-")")
+
+        let sameLan = localNetworkCapability().map { isSameLan(local: $0, peer: capability) } ?? false
+        guard sameLan else {
+            DispatchQueue.main.async {
+                self.udpDevices.removeAll { $0.hash_ == capability.hash }
+            }
+            logDebug("对端不在同一局域网，已移除在线设备: \(capability.deviceName)")
+            return
+        }
+
+        probeTcp(ip: capability.ip, port: port) { reachable in
+            DispatchQueue.main.async {
+                self.udpDevices.removeAll { $0.hash_ == capability.hash }
+                if reachable {
+                    self.udpDevices.append(UdpDevice(
+                        deviceName: capability.deviceName,
+                        role: "Peer",
+                        hash_: capability.hash,
+                        ip: capability.ip,
+                        filePort: port,
+                        deviceType: capability.deviceType,
+                        prefixLength: capability.prefixLength,
+                        gateway: capability.gateway,
+                        networkId: capability.networkId,
+                        lanReachable: true,
+                        lastSeen: capability.timestamp
+                    ))
+                    self.udpDevices = self.sortUdpDevices(self.udpDevices)
+                    self.logDebug("对端 LAN 可达: \(capability.deviceName) \(capability.ip):\(port)")
+                } else {
+                    self.logDebug("对端 LAN 探测失败，已移除在线设备: \(capability.deviceName)")
+                }
+            }
+        }
+    }
+
+    private func parsePeerCapability(_ payload: String) -> PeerNetworkCapability? {
+        let parts = payload.components(separatedBy: "|")
+        if parts.count >= 11, parts[0] == "CAP", parts[1] == "2" {
+            return PeerNetworkCapability(
+                deviceName: parts[2],
+                hash: parts[3],
+                deviceType: parts[4].isEmpty ? "Unknown" : parts[4],
+                ip: parts[5],
+                prefixLength: Int(parts[6]),
+                gateway: parts[7].isEmpty ? nil : parts[7],
+                filePort: Int(parts[8]),
+                networkId: parts[9].isEmpty ? nil : parts[9],
+                timestamp: Int64(parts[10]) ?? Int64(Date().timeIntervalSince1970 * 1000)
+            )
+        }
+        if parts.count >= 6, parts[0] == "CAP" {
+            return PeerNetworkCapability(
+                deviceName: parts[1],
+                hash: parts[2],
+                deviceType: parts[5].isEmpty ? "Unknown" : parts[5],
+                ip: parts[3],
+                prefixLength: nil,
+                gateway: nil,
+                filePort: Int(parts[4]),
+                networkId: nil,
+                timestamp: Int64(Date().timeIntervalSince1970 * 1000)
+            )
+        }
+        return nil
+    }
+
+    private func handleCapabilityLost(_ payload: String) {
+        let parts = payload.components(separatedBy: "|")
+        guard parts.count >= 2 else { return }
+        let hash = parts[1]
+        guard hash != myHash else { return }
+        DispatchQueue.main.async {
+            self.udpDevices.removeAll { $0.hash_ == hash }
+        }
+        logDebug("收到对端网络断开，已移除在线设备: \(hash)")
     }
 
     private func localIPv4Address() -> String? {
+        return localNetworkCapability()?.ip
+    }
+
+    private func localNetworkCapability() -> LocalNetworkCapability? {
         var interfaces: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&interfaces) == 0, let first = interfaces else {
             return nil
@@ -432,7 +553,8 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
                 continue
             }
             guard let address = current.pointee.ifa_addr,
-                  address.pointee.sa_family == UInt8(AF_INET) else {
+                  address.pointee.sa_family == UInt8(AF_INET),
+                  let netmask = current.pointee.ifa_netmask else {
                 continue
             }
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
@@ -446,10 +568,129 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
                 NI_NUMERICHOST
             )
             if result == 0 {
-                return String(cString: host)
+                let ip = String(cString: host)
+                let prefix = ipv4PrefixLength(from: netmask)
+                let gateway = defaultGatewayAddress()
+                return LocalNetworkCapability(
+                    ip: ip,
+                    prefixLength: prefix,
+                    gateway: gateway,
+                    networkId: "\(name):\(gateway ?? ""):\(prefix)"
+                )
             }
         }
         return nil
+    }
+
+    private func ipv4PrefixLength(from netmask: UnsafePointer<sockaddr>) -> Int {
+        let sockaddr = netmask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+        let mask = UInt32(bigEndian: sockaddr.sin_addr.s_addr)
+        return mask.nonzeroBitCount
+    }
+
+    private func defaultGatewayAddress() -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/route")
+        process.arguments = ["-n", "get", "default"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8) else { return nil }
+            for line in output.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("gateway:") {
+                    return trimmed.replacingOccurrences(of: "gateway:", with: "").trimmingCharacters(in: .whitespaces)
+                }
+            }
+        } catch {
+            return nil
+        }
+        return nil
+    }
+
+    private func isSameLan(local: LocalNetworkCapability, peer: PeerNetworkCapability) -> Bool {
+        if let localGateway = local.gateway, let peerGateway = peer.gateway, localGateway == peerGateway {
+            return true
+        }
+        guard let peerPrefix = peer.prefixLength, peerPrefix == local.prefixLength else {
+            return false
+        }
+        return sameSubnet(local.ip, peer.ip, prefixLength: local.prefixLength)
+    }
+
+    private func sameSubnet(_ left: String, _ right: String, prefixLength: Int) -> Bool {
+        guard let leftValue = ipv4ToUInt32(left), let rightValue = ipv4ToUInt32(right) else {
+            return false
+        }
+        let mask: UInt32 = prefixLength == 0 ? 0 : UInt32.max << UInt32(32 - prefixLength)
+        return (leftValue & mask) == (rightValue & mask)
+    }
+
+    private func ipv4ToUInt32(_ ip: String) -> UInt32? {
+        let parts = ip.split(separator: ".").compactMap { UInt32($0) }
+        guard parts.count == 4, parts.allSatisfy({ $0 <= 255 }) else { return nil }
+        return parts.reduce(UInt32(0)) { ($0 << 8) | $1 }
+    }
+
+    private func probeTcp(ip: String, port: Int, completion: @escaping (Bool) -> Void) {
+        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
+            completion(false)
+            return
+        }
+        let connection = NWConnection(host: NWEndpoint.Host(ip), port: nwPort, using: .tcp)
+        let queue = DispatchQueue(label: "CastPigeon.TcpProbe.\(ip).\(port)")
+        var completed = false
+
+        func finish(_ reachable: Bool) {
+            if completed { return }
+            completed = true
+            connection.cancel()
+            completion(reachable)
+        }
+
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                finish(true)
+            case .failed, .cancelled:
+                finish(false)
+            default:
+                break
+            }
+        }
+        connection.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + 1.5) {
+            finish(false)
+        }
+    }
+
+    private func startNetworkMonitoring() {
+        lastNetworkSignature = localNetworkCapability()?.signature
+        pathMonitor.pathUpdateHandler = { [weak self] _ in
+            guard let self else { return }
+            let signature = self.localNetworkCapability()?.signature
+            guard signature != self.lastNetworkSignature else { return }
+            self.lastNetworkSignature = signature
+            DispatchQueue.main.async {
+                self.udpDevices.removeAll()
+            }
+            self.sendCapabilityLost(reason: "网络变化")
+            if signature != nil {
+                self.sendLocalCapability(reason: "网络变化", force: true)
+            }
+        }
+        pathMonitor.start(queue: pathMonitorQueue)
+    }
+
+    private func sendCapabilityLost(reason: String) {
+        let payload = "CAP_LOST|\(myHash)|\(reason)|\(Int64(Date().timeIntervalSince1970 * 1000))"
+        sendControlPayload(payload)
+        logDebug("\(reason)，已发送网络断开信息")
     }
 
     // MARK: - Receiver (Central)
@@ -725,6 +966,8 @@ final class MainViewModel: NSObject, ObservableObject, CBCentralManagerDelegate,
                                 self.applyIncomingClipboardText(clipText)
                             } else if msg.hasPrefix("CAP|") {
                                 self.handleCapabilityPayload(msg)
+                            } else if msg.hasPrefix("CAP_LOST|") {
+                                self.handleCapabilityLost(msg)
                             } else {
                                 self.receivedMessage = msg
                                 let hash = self.peripheralHashes[peripheral.identifier] ?? "unknown"

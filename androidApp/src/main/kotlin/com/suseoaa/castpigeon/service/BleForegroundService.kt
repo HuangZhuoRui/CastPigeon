@@ -29,10 +29,14 @@ import android.content.ClipData
 import android.content.ClipboardManager.OnPrimaryClipChangedListener
 import android.net.ConnectivityManager
 import android.net.LinkAddress
+import android.net.LinkProperties
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.widget.Toast
 import com.suseoaa.castpigeon.IClipboardChangeCallback
 import java.net.Inet4Address
+import java.net.InetSocketAddress
+import java.net.Socket
 
 class BleForegroundService : Service() {
 
@@ -61,6 +65,8 @@ class BleForegroundService : Service() {
     private var registeredPrivilegedClipboard: com.suseoaa.castpigeon.IRootClipboard? = null
     private var pendingClipboardTextForMac: String? = null
     private var lastCapabilitySentAt = 0L
+    private var lastNetworkSignature: String? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     private val privilegedClipboardCallback = object : IClipboardChangeCallback.Stub() {
         override fun onClipboardChanged(text: String?) {
@@ -319,6 +325,7 @@ class BleForegroundService : Service() {
         } catch (e: Exception) {
             android.util.Log.e("CastPigeon", "注册剪贴板监听器失败", e)
         }
+        registerNetworkCallback()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -341,9 +348,64 @@ class BleForegroundService : Service() {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             clipboard.removePrimaryClipChangedListener(clipboardListener)
         } catch (e: Exception) { }
+        unregisterNetworkCallback()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun registerNetworkCallback() {
+        if (networkCallback != null) return
+        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        lastNetworkSignature = getLocalNetworkCapability()?.signature
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                handleNetworkMaybeChanged("网络可用")
+            }
+
+            override fun onLost(network: Network) {
+                handleNetworkMaybeChanged("网络断开")
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                handleNetworkMaybeChanged("网络能力变化")
+            }
+
+            override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+                handleNetworkMaybeChanged("网络地址变化")
+            }
+        }
+        networkCallback = callback
+        try {
+            connectivityManager.registerDefaultNetworkCallback(callback)
+            android.util.Log.i("CastPigeon", "已注册网络变化监听")
+        } catch (e: Exception) {
+            networkCallback = null
+            android.util.Log.w("CastPigeon", "注册网络变化监听失败", e)
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        val callback = networkCallback ?: return
+        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        try {
+            connectivityManager.unregisterNetworkCallback(callback)
+        } catch (_: Exception) {
+        }
+        networkCallback = null
+    }
+
+    private fun handleNetworkMaybeChanged(reason: String) {
+        serviceScope.launch {
+            val currentSignature = getLocalNetworkCapability()?.signature
+            if (currentSignature == lastNetworkSignature) return@launch
+            lastNetworkSignature = currentSignature
+            UdpDiscovery.clearDiscoveredDevices()
+            sendCapabilityLost(reason)
+            if (currentSignature != null) {
+                sendLocalCapabilityOverBle(reason, force = true)
+            }
+        }
+    }
 
     private fun startObservingNotifications() {
         if (isObserving) return
@@ -408,6 +470,8 @@ class BleForegroundService : Service() {
             } else if (msg.startsWith("CAP|")) {
                 handlePeerCapability(msg)
                 sendLocalCapabilityOverBle("收到对端能力信息后回送")
+            } else if (msg.startsWith("CAP_LOST|")) {
+                handleCapabilityLost(msg)
             } else {
                 AppConnectionManager.lastReceivedMessage.value = msg
             }
@@ -478,54 +542,156 @@ class BleForegroundService : Service() {
         return if (fits(json)) json else null
     }
 
-    private fun sendLocalCapabilityOverBle(reason: String) {
-        val now = System.currentTimeMillis()
-        if (now - lastCapabilitySentAt < 2_000) return
-        lastCapabilitySentAt = now
+    private data class LocalNetworkCapability(
+        val ip: String,
+        val prefixLength: Int,
+        val gateway: String?,
+        val networkId: String
+    ) {
+        val signature: String = "$ip/$prefixLength|${gateway.orEmpty()}|$networkId"
+    }
 
-        val ip = getLocalIpv4Address()
+    private data class PeerNetworkCapability(
+        val deviceName: String,
+        val hash: String,
+        val deviceType: String,
+        val ip: String,
+        val prefixLength: Int?,
+        val gateway: String?,
+        val filePort: Int?,
+        val networkId: String?,
+        val timestamp: Long
+    )
+
+    private fun sendLocalCapabilityOverBle(reason: String, force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastCapabilitySentAt < 2_000) return
+
+        val network = getLocalNetworkCapability()
         val filePort = LanFileTransferManager.serverPort.value
         val deviceHash = getDeviceHash().joinToString("") { "%02X".format(it) }
         val deviceName = android.provider.Settings.Global.getString(contentResolver, android.provider.Settings.Global.DEVICE_NAME)
             ?: Build.MODEL
             ?: "Android"
-        val payload = listOf("CAP", deviceName, deviceHash, ip.orEmpty(), filePort.toString(), "Android")
+        val payload = listOf(
+            "CAP",
+            "2",
+            deviceName,
+            deviceHash,
+            "Android",
+            network?.ip.orEmpty(),
+            network?.prefixLength?.toString().orEmpty(),
+            network?.gateway.orEmpty(),
+            filePort.toString(),
+            network?.networkId.orEmpty(),
+            now.toString()
+        )
             .joinToString("|")
 
         try {
-            if (AppConnectionManager.stateMachine.role.value == DeviceRole.Sender) {
-                AppConnectionManager.blePeripheral.sendNotificationData(payload.encodeToByteArray())
-            } else {
-                AppConnectionManager.bleCentral.sendMessage(payload)
-            }
+            sendControlPayloadOverBle(payload)
+            lastCapabilitySentAt = now
             android.util.Log.i("CastPigeon", "$reason 已发送能力信息: $payload")
         } catch (e: Exception) {
             android.util.Log.e("CastPigeon", "$reason 发送能力信息失败", e)
         }
     }
 
-    private fun handlePeerCapability(payload: String) {
-        val parts = payload.split("|")
-        if (parts.size < 6) return
-        val deviceName = parts[1]
-        val hash = parts[2]
-        val ip = parts[3].takeIf { it.isNotBlank() } ?: return
-        val port = parts[4].toIntOrNull()
-        val deviceType = parts[5].ifBlank { "Unknown" }
-        UdpDiscovery.upsertDiscoveredDevice(
-            UdpDevice(
-                deviceName = deviceName,
-                role = "Peer",
-                hash = hash,
-                ipAddress = ip,
-                filePort = port,
-                deviceType = deviceType
-            )
-        )
-        android.util.Log.i("CastPigeon", "收到 BLE 能力信息并更新在线设备: $payload")
+    private fun sendCapabilityLost(reason: String) {
+        val deviceHash = getDeviceHash().joinToString("") { "%02X".format(it) }
+        val payload = "CAP_LOST|$deviceHash|$reason|${System.currentTimeMillis()}"
+        try {
+            sendControlPayloadOverBle(payload)
+            android.util.Log.i("CastPigeon", "$reason 已发送网络断开信息: $payload")
+        } catch (e: Exception) {
+            android.util.Log.w("CastPigeon", "$reason 发送网络断开信息失败", e)
+        }
     }
 
-    private fun getLocalIpv4Address(): String? {
+    private fun sendControlPayloadOverBle(payload: String) {
+        if (AppConnectionManager.stateMachine.role.value == DeviceRole.Sender) {
+            AppConnectionManager.blePeripheral.sendNotificationData(payload.encodeToByteArray())
+        } else {
+            AppConnectionManager.bleCentral.sendMessage(payload)
+        }
+    }
+
+    private fun handlePeerCapability(payload: String) {
+        val capability = parsePeerCapability(payload) ?: return
+        val local = getLocalNetworkCapability()
+        if (capability.hash == getDeviceHash().joinToString("") { "%02X".format(it) }) return
+        if (capability.ip.isBlank() || capability.filePort == null) {
+            UdpDiscovery.removeDiscoveredDevice(capability.hash)
+            return
+        }
+
+        serviceScope.launch {
+            val sameLan = local != null && isSameLan(local, capability)
+            val reachable = sameLan && canConnectTo(capability.ip, capability.filePort)
+            if (reachable) {
+                UdpDiscovery.upsertDiscoveredDevice(
+                    UdpDevice(
+                        deviceName = capability.deviceName,
+                        role = "Peer",
+                        hash = capability.hash,
+                        ipAddress = capability.ip,
+                        filePort = capability.filePort,
+                        deviceType = capability.deviceType,
+                        prefixLength = capability.prefixLength,
+                        gateway = capability.gateway,
+                        networkId = capability.networkId,
+                        lanReachable = true,
+                        lastSeen = capability.timestamp
+                    )
+                )
+                android.util.Log.i("CastPigeon", "对端 LAN 可达，已更新在线设备: $payload")
+            } else {
+                UdpDiscovery.removeDiscoveredDevice(capability.hash)
+                android.util.Log.i("CastPigeon", "对端 LAN 不可达，已从在线设备移除: sameLan=$sameLan, payload=$payload")
+            }
+        }
+    }
+
+    private fun parsePeerCapability(payload: String): PeerNetworkCapability? {
+        val parts = payload.split("|")
+        return if (parts.size >= 11 && parts[0] == "CAP" && parts[1] == "2") {
+            PeerNetworkCapability(
+                deviceName = parts[2],
+                hash = parts[3],
+                deviceType = parts[4].ifBlank { "Unknown" },
+                ip = parts[5],
+                prefixLength = parts[6].toIntOrNull(),
+                gateway = parts[7].ifBlank { null },
+                filePort = parts[8].toIntOrNull(),
+                networkId = parts[9].ifBlank { null },
+                timestamp = parts[10].toLongOrNull() ?: System.currentTimeMillis()
+            )
+        } else if (parts.size >= 6 && parts[0] == "CAP") {
+            PeerNetworkCapability(
+                deviceName = parts[1],
+                hash = parts[2],
+                deviceType = parts[5].ifBlank { "Unknown" },
+                ip = parts[3],
+                prefixLength = null,
+                gateway = null,
+                filePort = parts[4].toIntOrNull(),
+                networkId = null,
+                timestamp = System.currentTimeMillis()
+            )
+        } else {
+            null
+        }
+    }
+
+    private fun handleCapabilityLost(payload: String) {
+        val parts = payload.split("|")
+        val hash = parts.getOrNull(1) ?: return
+        if (hash == getDeviceHash().joinToString("") { "%02X".format(it) }) return
+        UdpDiscovery.removeDiscoveredDevice(hash)
+        android.util.Log.i("CastPigeon", "收到对端网络断开，已移除在线设备: $payload")
+    }
+
+    private fun getLocalNetworkCapability(): LocalNetworkCapability? {
         val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val networks = connectivityManager.allNetworks
         val sortedNetworks = networks.sortedByDescending { network ->
@@ -541,11 +707,59 @@ class BleForegroundService : Service() {
             for (address: LinkAddress in properties.linkAddresses) {
                 val inetAddress = address.address
                 if (inetAddress is Inet4Address && !inetAddress.isLoopbackAddress) {
-                    return inetAddress.hostAddress
+                    val gateway = defaultGateway(properties)
+                    val ip = inetAddress.hostAddress ?: continue
+                    val networkId = "${interfaceName}:${gateway.orEmpty()}:${address.prefixLength}"
+                    return LocalNetworkCapability(
+                        ip = ip,
+                        prefixLength = address.prefixLength,
+                        gateway = gateway,
+                        networkId = networkId
+                    )
                 }
             }
         }
         return null
+    }
+
+    private fun defaultGateway(properties: LinkProperties): String? {
+        return properties.routes.firstOrNull { it.isDefaultRoute && it.gateway is Inet4Address }
+            ?.gateway
+            ?.hostAddress
+    }
+
+    private fun isSameLan(local: LocalNetworkCapability, peer: PeerNetworkCapability): Boolean {
+        if (!local.gateway.isNullOrBlank() && local.gateway == peer.gateway) return true
+        val peerPrefix = peer.prefixLength ?: return false
+        return local.prefixLength == peerPrefix && sameSubnet(local.ip, peer.ip, local.prefixLength)
+    }
+
+    private fun sameSubnet(left: String, right: String, prefixLength: Int): Boolean {
+        val leftInt = ipv4ToInt(left) ?: return false
+        val rightInt = ipv4ToInt(right) ?: return false
+        val mask = if (prefixLength == 0) 0 else (-1 shl (32 - prefixLength))
+        return (leftInt and mask) == (rightInt and mask)
+    }
+
+    private fun ipv4ToInt(ip: String): Int? {
+        val parts = ip.split(".")
+        if (parts.size != 4) return null
+        return parts.fold(0) { acc, part ->
+            val value = part.toIntOrNull() ?: return null
+            if (value !in 0..255) return null
+            (acc shl 8) or value
+        }
+    }
+
+    private fun canConnectTo(ip: String, port: Int): Boolean {
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(ip, port), 1_500)
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun updateNotification() {

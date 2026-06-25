@@ -295,9 +295,10 @@ fun MainScreen(
         }
     }
 
-    LaunchedEffect(workMode, role) {
-        if (workMode == WorkMode.Pairing && role == DeviceRole.Sender) {
+    LaunchedEffect(workMode) {
+        if (workMode == WorkMode.Pairing) {
             UdpDiscovery.pairingSuccessEvent.collect { boundDevice ->
+                if (boundDevice.hash == myHashStr) return@collect
                 upsertBoundDeviceEntry(
                     prefs = prefs,
                     boundMacs = boundMacs,
@@ -499,6 +500,7 @@ fun MainScreen(
                             boundMacs = boundMacs,
                             boundDeviceEntries = boundDeviceEntries,
                             myName = myName,
+                            myHashStr = myHashStr,
                             prefs = prefs,
                             hazeState = hazeState
                         )
@@ -526,6 +528,7 @@ fun DashboardContent(
     boundMacs: SnapshotStateList<String>,
     boundDeviceEntries: List<BoundDeviceEntry>,
     myName: String,
+    myHashStr: String,
     prefs: android.content.SharedPreferences,
     hazeState: dev.chrisbanes.haze.HazeState
 ) {
@@ -686,6 +689,29 @@ fun DashboardContent(
                         colors = switchColors
                     )
                 }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("本机角色", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    FilterChip(
+                        selected = role == DeviceRole.Sender,
+                        onClick = { if (workMode == WorkMode.Idle) stateMachine.setRole(DeviceRole.Sender) },
+                        enabled = workMode == WorkMode.Idle,
+                        label = { Text("发送端") }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    FilterChip(
+                        selected = role == DeviceRole.Receiver,
+                        onClick = { if (workMode == WorkMode.Idle) stateMachine.setRole(DeviceRole.Receiver) },
+                        enabled = workMode == WorkMode.Idle,
+                        label = { Text("接收端") }
+                    )
+                }
             }
         }
 
@@ -737,73 +763,108 @@ fun DashboardContent(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        if (boundDeviceEntries.isNotEmpty()) {
-            val sortedBoundDeviceEntries = boundDeviceEntries
-                .sortedWith(compareBy<BoundDeviceEntry> { it.name.lowercase() }.thenBy { it.hash ?: it.rawValue })
-            ElevatedCard(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        val sortedBoundDeviceEntries = boundDeviceEntries
+            .sortedWith(compareBy<BoundDeviceEntry> { it.name.lowercase() }.thenBy { it.hash ?: it.rawValue })
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .fillMaxWidth()
             ) {
-                Column(
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("已绑定设备", fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(12.dp))
+                    TextButton(
+                        onClick = {
+                            startBluetoothAction(
+                                stateMachine,
+                                blePeripheral,
+                                bleCentral,
+                                role,
+                                WorkMode.Pairing,
+                                deviceHash,
+                                boundMacs,
+                                myName
+                            )
+                        },
+                        enabled = workMode != WorkMode.Pairing
+                    ) {
+                        Text(if (workMode == WorkMode.Pairing) "配对中" else "绑定新设备")
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                if (sortedBoundDeviceEntries.isEmpty()) {
+                    Text(
+                        "还没有绑定设备，可以先搜索附近设备完成配对。",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                } else {
                     sortedBoundDeviceEntries.forEachIndexed { index, entry ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(entry.name, fontWeight = FontWeight.SemiBold)
-                                    Text(
-                                        entry.hash?.let { "Hash: $it" } ?: "旧版绑定记录",
-                                        fontSize = 12.sp,
-                                        color = Color.Gray
-                                    )
-                                }
-                                IconButton(onClick = {
-                                    removeBoundDeviceEntry(prefs, boundMacs, entry)
-                                    if (boundMacs.isEmpty() && workMode == WorkMode.Working) {
-                                        UdpDiscovery.stop()
-                                        blePeripheral.stopAdvertising()
-                                        blePeripheral.disconnectCurrentDevice()
-                                        bleCentral.stopScanning()
-                                        bleCentral.disconnect()
-                                        stateMachine.setWorkMode(WorkMode.Idle)
-                                        val ctx = com.suseoaa.castpigeon.shared.BleContextHolder.applicationContext
-                                        if (ctx != null) {
-                                            com.suseoaa.castpigeon.service.BleForegroundService.stop(ctx)
-                                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(entry.name, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    entry.hash?.let { "Hash: $it" } ?: "旧版绑定记录",
+                                    fontSize = 12.sp,
+                                    color = Color.Gray
+                                )
+                            }
+                            IconButton(onClick = {
+                                removeBoundDeviceEntry(prefs, boundMacs, entry)
+                                if (boundMacs.isEmpty() && workMode == WorkMode.Working) {
+                                    UdpDiscovery.stop()
+                                    blePeripheral.stopAdvertising()
+                                    blePeripheral.disconnectCurrentDevice()
+                                    bleCentral.stopScanning()
+                                    bleCentral.disconnect()
+                                    stateMachine.setWorkMode(WorkMode.Idle)
+                                    val ctx = com.suseoaa.castpigeon.shared.BleContextHolder.applicationContext
+                                    if (ctx != null) {
+                                        com.suseoaa.castpigeon.service.BleForegroundService.stop(ctx)
                                     }
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        "已删除 ${entry.name}",
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                }) {
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        contentDescription = "删除绑定设备",
-                                        tint = MaterialTheme.colorScheme.error
-                                    )
                                 }
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "已删除 ${entry.name}",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "删除绑定设备",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
                             }
-                            if (index < sortedBoundDeviceEntries.lastIndex) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
+                        }
+                        if (index < sortedBoundDeviceEntries.lastIndex) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
         }
+        Spacer(modifier = Modifier.height(16.dp))
 
         val udpDevices by UdpDiscovery.discoveredDevices.collectAsState()
-        if (workMode == WorkMode.Pairing || udpDevices.isNotEmpty()) {
+        val visibleUdpDevices = remember(udpDevices, myHashStr, workMode) {
+            udpDevices
+                .filterNot { it.hash == myHashStr }
+                .filter { workMode == WorkMode.Pairing || it.lanReachable }
+                .sortedWith(compareBy<UdpDevice> { it.deviceName.lowercase() }.thenBy { it.hash })
+        }
+        if (workMode == WorkMode.Pairing || visibleUdpDevices.isNotEmpty()) {
             Text(
                 "在线设备",
                 fontSize = 16.sp,
@@ -811,9 +872,9 @@ fun DashboardContent(
                 modifier = Modifier.align(Alignment.Start)
             )
             Spacer(modifier = Modifier.height(8.dp))
-            if (udpDevices.isNotEmpty()) {
+            if (visibleUdpDevices.isNotEmpty()) {
                 LazyColumn {
-                    items(udpDevices.toList()) { device ->
+                    items(visibleUdpDevices, key = { it.hash }) { device ->
                         ElevatedCard(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -837,13 +898,13 @@ fun DashboardContent(
                                 Column {
                                     Text(device.deviceName, fontWeight = FontWeight.Bold)
                                     Text(
-                                        "${device.deviceType} · IP: ${device.ipAddress} · 文件端口: ${device.filePort ?: "不可用"}",
+                                        "${device.deviceType} · ${if (device.lanReachable) "局域网可达" else "等待验证"} · IP: ${device.ipAddress} · 文件端口: ${device.filePort ?: "不可用"}",
                                         fontSize = 12.sp,
                                         color = Color.Gray
                                     )
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (device.filePort != null) {
+                                    if (device.filePort != null && device.lanReachable) {
                                         TextButton(onClick = {
                                             fileTargetDevice = device
                                             filePickerLauncher.launch("*/*")

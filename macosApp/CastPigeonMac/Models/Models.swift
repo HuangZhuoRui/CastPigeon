@@ -18,6 +18,11 @@ struct UdpDevice: Hashable {
     var ip: String? = nil
     var filePort: Int? = nil
     var deviceType: String = "Unknown"
+    var prefixLength: Int? = nil
+    var gateway: String? = nil
+    var networkId: String? = nil
+    var lanReachable: Bool = false
+    var lastSeen: Int64 = 0
 }
 
 struct NotificationMessage: Codable {
