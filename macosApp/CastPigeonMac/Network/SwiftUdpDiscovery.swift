@@ -19,9 +19,14 @@ class SwiftUdpDiscovery {
     private var myPairingHash: String? = nil
     private var myRole: String? = nil
     private var myName: String? = nil
+    private var isPairingOpen: Bool = false
+    private var trustedPeerHashes: Set<String> = []
+    private var currentBroadcastMessage: String?
     
     private var currentExpectedPin: String? = nil
     private var currentPairingTargetHash: String? = nil
+    private var pendingBindingTarget: UdpDevice?
+    private var pendingBindingTargetIp: String?
     private let ignoredBroadcastInterfacePrefixes = ["lo", "utun", "awdl", "llw", "bridge", "feth", "gif", "stf"]
 
     private func sortedDevices() -> [UdpDevice] {
@@ -75,10 +80,12 @@ class SwiftUdpDiscovery {
         listenSource?.resume()
     }
     
-    func startListening(role: String, deviceName: String, hash: String) {
+    func startListening(role: String, deviceName: String, hash: String, pairingMode: Bool, trustedHashes: Set<String>) {
         self.myPairingHash = hash
         self.myRole = role
         self.myName = deviceName
+        self.isPairingOpen = pairingMode
+        self.trustedPeerHashes = Set(trustedHashes.map { $0.uppercased() })
         
         setupSocket()
         
@@ -125,6 +132,9 @@ class SwiftUdpDiscovery {
             if parts[3] == self.myPairingHash {
                 return
             }
+            if !isPairingOpen && !trustedPeerHashes.contains(parts[3].uppercased()) {
+                return
+            }
             let filePort = parts.count >= 5 ? Int(parts[4]) : nil
             let deviceType = parts.count >= 6 ? parts[5] : "Unknown"
             let newDevice = UdpDevice(deviceName: parts[2], role: parts[1], hash_: parts[3], ip: ipString, filePort: filePort.flatMap { $0 > 0 ? $0 : nil }, deviceType: deviceType)
@@ -135,6 +145,7 @@ class SwiftUdpDiscovery {
             }
             
         } else if parts.count == 5 && parts[0] == "CP_BIND_REQUEST" {
+            guard isPairingOpen else { return }
             let targetHash = parts[1]
             if targetHash == self.myPairingHash {
                 let reqRole = parts[2]
@@ -153,6 +164,7 @@ class SwiftUdpDiscovery {
             }
             
         } else if parts.count == 6 && parts[0] == "CP_BIND_VERIFY" {
+            guard isPairingOpen else { return }
             let targetHash = parts[1]
             if targetHash == self.myPairingHash {
                 let reqRole = parts[2]
@@ -178,7 +190,14 @@ class SwiftUdpDiscovery {
             let targetHash = parts[1]
             let senderHash = parts[2]
             if targetHash == self.myPairingHash {
-                if let device = self.devices.first(where: { $0.hash_ == senderHash }) {
+                if var updatedDevice = self.pendingBindingTarget, updatedDevice.hash_ == senderHash {
+                    updatedDevice.ip = ipString
+                    self.pendingBindingTarget = nil
+                    self.pendingBindingTargetIp = nil
+                    DispatchQueue.main.async {
+                        self.onPairingSuccess?(updatedDevice)
+                    }
+                } else if let device = self.devices.first(where: { $0.hash_ == senderHash }) {
                     var updatedDevice = device
                     updatedDevice.ip = ipString
                     DispatchQueue.main.async {
@@ -189,15 +208,26 @@ class SwiftUdpDiscovery {
         }
     }
     
-    func startBroadcasting(role: String, deviceName: String, hash: String, filePort: Int? = nil, deviceType: String = "Mac") {
-        startListening(role: role, deviceName: deviceName, hash: hash)
+    func startBroadcasting(
+        role: String,
+        deviceName: String,
+        hash: String,
+        filePort: Int? = nil,
+        deviceType: String = "Mac",
+        pairingMode: Bool = true,
+        trustedHashes: Set<String> = []
+    ) {
+        startListening(role: role, deviceName: deviceName, hash: hash, pairingMode: pairingMode, trustedHashes: trustedHashes)
         
         let msg = "CP_PAIR|\(role)|\(deviceName)|\(hash)|\(filePort ?? 0)|\(deviceType)"
+        currentBroadcastMessage = msg
+        broadcastTimer?.cancel()
         
         broadcastTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .userInitiated))
         broadcastTimer?.schedule(deadline: .now(), repeating: 1.0)
         broadcastTimer?.setEventHandler { [weak self] in
-            self?.sendUdpMessage(msg)
+            guard let self, let message = self.currentBroadcastMessage else { return }
+            self.sendUdpMessage(message)
         }
         broadcastTimer?.resume()
     }
@@ -205,6 +235,8 @@ class SwiftUdpDiscovery {
     func requestBinding(targetHash: String, targetDeviceName: String, targetRole: String, targetIp: String? = nil) {
         guard let myRole = myRole, let myName = myName, let myHash = myPairingHash else { return }
         guard targetHash != myHash else { return }
+        pendingBindingTarget = UdpDevice(deviceName: targetDeviceName, role: targetRole, hash_: targetHash, ip: targetIp)
+        pendingBindingTargetIp = targetIp
         
         sendUdpMessage("CP_BIND_REQUEST|\(targetHash)|\(myRole)|\(myName)|\(myHash)", targetIp: targetIp)
         
@@ -216,7 +248,7 @@ class SwiftUdpDiscovery {
     
     func verifyBinding(targetHash: String, pin: String, targetIp: String? = nil) {
         guard let myRole = myRole, let myName = myName, let myHash = myPairingHash else { return }
-        sendUdpMessage("CP_BIND_VERIFY|\(targetHash)|\(myRole)|\(myName)|\(myHash)|\(pin)", targetIp: targetIp)
+        sendUdpMessage("CP_BIND_VERIFY|\(targetHash)|\(myRole)|\(myName)|\(myHash)|\(pin)", targetIp: targetIp ?? pendingBindingTargetIp)
     }
     
     private func sendUdpMessage(_ msg: String, targetIp: String? = nil) {
@@ -241,7 +273,7 @@ class SwiftUdpDiscovery {
 
                     data.withUnsafeBytes { rawBuffer in
                         if let baseAddress = rawBuffer.baseAddress {
-                            withUnsafePointer(to: &addr) {
+                            _ = withUnsafePointer(to: &addr) {
                                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { addrPtr in
                                     sendto(tempSocket, baseAddress, data.count, 0, addrPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
                                 }
@@ -257,7 +289,7 @@ class SwiftUdpDiscovery {
 
     private func udpTargets(for targetIp: String?) -> [String] {
         if let targetIp = targetIp, !targetIp.isEmpty {
-            return [targetIp]
+            return Array(Set([targetIp] + activeIPv4BroadcastAddresses()))
         }
 
         let interfaceBroadcasts = activeIPv4BroadcastAddresses()
@@ -326,8 +358,13 @@ class SwiftUdpDiscovery {
         myPairingHash = nil
         myRole = nil
         myName = nil
+        isPairingOpen = false
+        trustedPeerHashes = []
+        currentBroadcastMessage = nil
         currentExpectedPin = nil
         currentPairingTargetHash = nil
+        pendingBindingTarget = nil
+        pendingBindingTargetIp = nil
         devices.removeAll()
         onDeviceDiscovered?([])
     }

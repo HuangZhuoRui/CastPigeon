@@ -6,6 +6,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +41,7 @@ import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -194,12 +196,25 @@ fun FloatingBottomBar(
     val isInDark = isSystemInDarkTheme()
     val pillShape = remember { CircleShape }
     val accentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSecondaryContainer
+    val primaryColor = androidx.compose.material3.MaterialTheme.colorScheme.primary
     val surfaceContainer = androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainer
     val containerColor = if (isBlurEnabled) {
         if (isInDark) Color.Black.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.5f)
     } else {
-        surfaceContainer
+        if (isInDark) surfaceContainer.copy(alpha = 0.82f) else Color.White.copy(alpha = 0.86f)
     }
+    val staticBorderColor = if (isInDark) {
+        Color.White.copy(alpha = 0.14f)
+    } else {
+        Color.White.copy(alpha = 0.72f)
+    }
+    val staticIndicatorBrush = Brush.linearGradient(
+        colors = if (isInDark) {
+            listOf(primaryColor.copy(alpha = 0.34f), Color.White.copy(alpha = 0.10f))
+        } else {
+            listOf(Color.White.copy(alpha = 0.95f), primaryColor.copy(alpha = 0.18f))
+        }
+    )
 
     val tabsBackdrop = rememberLayerBackdrop()
     val density = LocalDensity.current
@@ -352,7 +367,9 @@ fun FloatingBottomBar(
                             onDrawSurface = { drawRect(containerColor) },
                         )
                     } else {
-                        Modifier.background(containerColor, pillShape)
+                        Modifier
+                            .background(containerColor, pillShape)
+                            .border(1.dp, staticBorderColor, pillShape)
                     }
                 )
                 .then(if (isBlurEnabled) interactiveHighlight.modifier else Modifier)
@@ -458,7 +475,19 @@ fun FloatingBottomBar(
                         }
                         .then(dampedDragAnimation.modifier)
                         .clip(pillShape)
-                        .background(accentColor.copy(alpha = 0.15f), pillShape)
+                        .background(staticIndicatorBrush, pillShape)
+                        .border(
+                            1.dp,
+                            if (isInDark) Color.White.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.88f),
+                            pillShape
+                        )
+                        .innerShadow(shape = pillShape) {
+                            InnerShadow(
+                                radius = 5.dp,
+                                color = Color.Black.copy(alpha = if (isInDark) 0.22f else 0.10f),
+                                alpha = 0.45f,
+                            )
+                        }
                         .height(56.dp)
                         .width(tabWidthDp)
                 )

@@ -17,6 +17,8 @@ import com.suseoaa.castpigeon.ui.AppTab
 
 import androidx.compose.ui.layout.onSizeChanged
 
+private const val BOTTOM_BAR_BLUR_ENABLED = false
+
 @Composable
 fun LiquidGlassBackdropWrapper(
     isLiquidGlassTabbarEnabled: Boolean,
@@ -31,7 +33,7 @@ fun LiquidGlassBackdropWrapper(
         val backdrop = rememberLayerBackdrop()
         val density = androidx.compose.ui.platform.LocalDensity.current
         Box(modifier = modifier) {
-            content(Modifier.layerBackdrop(backdrop))
+            content(if (BOTTOM_BAR_BLUR_ENABLED) Modifier.layerBackdrop(backdrop) else Modifier)
             FloatingBottomBar(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)
                     .onSizeChanged { 
@@ -43,7 +45,7 @@ fun LiquidGlassBackdropWrapper(
                 onSelected = onNavigate,
                 backdrop = backdrop,
                 tabsCount = AppTab.entries.size,
-                isBlurEnabled = true
+                isBlurEnabled = BOTTOM_BAR_BLUR_ENABLED
             ) {
                 AppTab.entries.forEachIndexed { index, item ->
                     FloatingBottomBarItem(

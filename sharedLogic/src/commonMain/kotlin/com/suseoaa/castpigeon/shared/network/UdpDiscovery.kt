@@ -53,13 +53,19 @@ object UdpDiscovery {
     @Volatile private var myPairingHash: String? = null
     @Volatile private var myRole: String? = null
     @Volatile private var myName: String? = null
+    @Volatile private var isPairingOpen: Boolean = false
+    @Volatile private var trustedPeerHashes: Set<String> = emptySet()
+    @Volatile private var currentBroadcastMessage: String? = null
     
     // 正在处理的配对上下文
     @Volatile private var currentExpectedPin: String? = null
     @Volatile private var currentPairingTargetHash: String? = null
+    @Volatile private var pendingBindingTarget: UdpDevice? = null
+    @Volatile private var pendingBindingTargetIp: String? = null
 
     fun startListening() {
         if (listeningJob?.isActive == true) return
+        UdpPlatformSupport.acquireMulticastLock()
         
         // 如果旧的作用域已被取消，重新初始化
         if (!discoveryScope.isActive) {
@@ -87,6 +93,9 @@ object UdpDiscovery {
                         if (hash == myPairingHash) {
                             continue
                         }
+                        if (!isPairingOpen && !isTrusted(hash)) {
+                            continue
+                        }
                         val filePort = parts.getOrNull(4)?.toIntOrNull()?.takeIf { it > 0 }
                         val deviceType = parts.getOrNull(5) ?: "Unknown"
                         val ip = sanitizeEndpointAddress(datagram.address.toString())
@@ -95,8 +104,9 @@ object UdpDiscovery {
                         _discoveredDevices.update { devices ->
                             devices.filterNot { it.hash == hash }.toSet() + newDevice
                         }
-                        
+
                     } else if (parts.size >= 5 && parts[0] == "CP_BIND_REQUEST") {
+                        if (!isPairingOpen) continue
                         // CP_BIND_REQUEST|TargetHash|RequesterRole|RequesterName|RequesterHash
                         val targetHash = parts[1]
                         if (targetHash == myPairingHash) {
@@ -117,8 +127,9 @@ object UdpDiscovery {
                                 _pinDisplayEvent.emit(PinDisplayInfo(pin, requestingDevice))
                             }
                         }
-                        
-                    } else if (parts.size >= 6 && parts[0] == "CP_BIND_VERIFY") {
+
+	                    } else if (parts.size >= 6 && parts[0] == "CP_BIND_VERIFY") {
+                        if (!isPairingOpen) continue
                         // CP_BIND_VERIFY|TargetHash|RequesterRole|RequesterName|RequesterHash|PIN
                         val targetHash = parts[1]
                         if (targetHash == myPairingHash) {
@@ -129,30 +140,35 @@ object UdpDiscovery {
                             val receivedPin = parts[5]
                             val ip = sanitizeEndpointAddress(datagram.address.toString())
                             val requestingDevice = UdpDevice(reqName, reqRole, reqHash, ip)
-                            
+
                             if (currentExpectedPin == receivedPin && currentPairingTargetHash == reqHash) {
                                 // 验证成功
                                 currentExpectedPin = null
                                 currentPairingTargetHash = null
-                                
+
                                 // 回复 SUCCESS
-                                sendUdpMessage("CP_BIND_SUCCESS|$reqHash|$myPairingHash")
-                                
+                                sendUdpMessage("CP_BIND_SUCCESS|$reqHash|$myPairingHash", ip)
+
                                 withContext(Dispatchers.Main) {
                                     _pairingSuccessEvent.emit(requestingDevice)
                                 }
                             }
                         }
                         
-                    } else if (parts.size >= 3 && parts[0] == "CP_BIND_SUCCESS") {
+	                    } else if (parts.size >= 3 && parts[0] == "CP_BIND_SUCCESS") {
                         // CP_BIND_SUCCESS|TargetHash|SenderHash
                         val targetHash = parts[1]
                         val senderHash = parts[2]
                         if (targetHash == myPairingHash) {
                             // 我是发起方，收到对方的验证成功通知
-                            // 从已发现设备中找到它
-                            val device = _discoveredDevices.value.find { it.hash == senderHash }
+                            // 优先使用发起绑定时缓存的目标，避免发现列表刷新导致成功包无法落库。
+                            val device = pendingBindingTarget
+                                ?.takeIf { it.hash == senderHash }
+                                ?.copy(ipAddress = sanitizeEndpointAddress(datagram.address.toString()))
+                                ?: _discoveredDevices.value.find { it.hash == senderHash }
                             if (device != null) {
+                                pendingBindingTarget = null
+                                pendingBindingTargetIp = null
                                 withContext(Dispatchers.Main) {
                                     _pairingSuccessEvent.emit(device)
                                 }
@@ -187,13 +203,26 @@ object UdpDiscovery {
         _discoveredDevices.value = emptySet()
     }
     
-    fun startBroadcasting(role: String, deviceName: String, hash: String, filePort: Int? = null, deviceType: String = "Android") {
-        if (broadcastingJob?.isActive == true) return
+    fun startBroadcasting(
+        role: String,
+        deviceName: String,
+        hash: String,
+        filePort: Int? = null,
+        deviceType: String = "Android",
+        pairingMode: Boolean = true,
+        trustedHashes: Set<String> = emptySet()
+    ) {
         myPairingHash = hash
         myRole = role
         myName = deviceName
+        isPairingOpen = pairingMode
+        trustedPeerHashes = trustedHashes.map { it.uppercase() }.toSet()
+        val portValue = filePort ?: 0
+        currentBroadcastMessage = "CP_PAIR|$role|$deviceName|$hash|$portValue|$deviceType"
         
         startListening()
+
+        if (broadcastingJob?.isActive == true) return
         
         if (!discoveryScope.isActive) {
             discoveryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -206,12 +235,12 @@ object UdpDiscovery {
                 socket = aSocket(selectorManager).udp().bind {
                     broadcast = true
                 }
-                val broadcastAddress = InetSocketAddress("255.255.255.255", PORT)
-                val portValue = filePort ?: 0
-                val msg = "CP_PAIR|$role|$deviceName|$hash|$portValue|$deviceType"
                 while (isActive) {
-                    val packet = buildPacket { writeText(msg) }
-                    socket.send(Datagram(packet, broadcastAddress))
+                    val msg = currentBroadcastMessage ?: continue
+                    UdpPlatformSupport.broadcastTargets().forEach { targetIp ->
+                        val packet = buildPacket { writeText(msg) }
+                        socket.send(Datagram(packet, InetSocketAddress(targetIp, PORT)))
+                    }
                     delay(1000)
                 }
             } catch (e: Exception) {
@@ -227,9 +256,11 @@ object UdpDiscovery {
     fun requestBinding(targetHash: String, targetDeviceName: String, targetRole: String, targetIp: String) {
         if (myRole == null || myName == null || myPairingHash == null) return
         if (targetHash == myPairingHash) return
-        
+        pendingBindingTarget = UdpDevice(targetDeviceName, targetRole, targetHash, targetIp)
+        pendingBindingTargetIp = targetIp
+
         // 发送 BIND_REQUEST
-        sendUdpMessage("CP_BIND_REQUEST|$targetHash|$myRole|$myName|$myPairingHash")
+        sendUdpMessage("CP_BIND_REQUEST|$targetHash|$myRole|$myName|$myPairingHash", targetIp)
         
         // 本地触发 UI 弹窗要求输入 PIN
         discoveryScope.launch(Dispatchers.Main) {
@@ -241,10 +272,10 @@ object UdpDiscovery {
     fun verifyBinding(targetHash: String, pin: String) {
         if (myRole == null || myName == null || myPairingHash == null) return
         // 发送 BIND_VERIFY
-        sendUdpMessage("CP_BIND_VERIFY|$targetHash|$myRole|$myName|$myPairingHash|$pin")
+        sendUdpMessage("CP_BIND_VERIFY|$targetHash|$myRole|$myName|$myPairingHash|$pin", pendingBindingTargetIp)
     }
-    
-    private fun sendUdpMessage(msg: String) {
+
+    private fun sendUdpMessage(msg: String, targetIp: String? = null) {
         // 使用独立的全局IO协程发射UDP，防止被 UI 的 stop() 提前中止导致对方收不到 SUCCESS 包
         CoroutineScope(Dispatchers.IO).launch {
             val selectorManager = SelectorManager(Dispatchers.IO)
@@ -253,12 +284,20 @@ object UdpDiscovery {
                 socket = aSocket(selectorManager).udp().bind {
                     broadcast = true
                 }
-                val broadcastAddress = InetSocketAddress("255.255.255.255", PORT)
-                
+                val targets = buildList {
+                    if (!targetIp.isNullOrBlank()) add(targetIp)
+                    addAll(UdpPlatformSupport.broadcastTargets())
+                }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                    .map { InetSocketAddress(it, PORT) }
+
                 // 连发3次确保触达
                 repeat(3) {
-                    val packet = buildPacket { writeText(msg) }
-                    socket.send(Datagram(packet, broadcastAddress))
+                    for (target in targets) {
+                        val packet = buildPacket { writeText(msg) }
+                        socket.send(Datagram(packet, target))
+                    }
                     delay(200)
                 }
             } catch (e: Exception) {
@@ -278,15 +317,26 @@ object UdpDiscovery {
         myPairingHash = null
         myRole = null
         myName = null
+        isPairingOpen = false
+        trustedPeerHashes = emptySet()
+        currentBroadcastMessage = null
         currentExpectedPin = null
         currentPairingTargetHash = null
+        pendingBindingTarget = null
+        pendingBindingTargetIp = null
         _discoveredDevices.value = emptySet()
+        UdpPlatformSupport.releaseMulticastLock()
     }
 
     private fun sanitizeEndpointAddress(raw: String): String {
         return raw
             .removePrefix("/")
-            .substringBeforeLast(":", raw.removePrefix("/"))
-            .removeSurrounding("[", "]")
+	            .substringBeforeLast(":", raw.removePrefix("/"))
+	            .removeSurrounding("[", "]")
+	    }
+
+    private fun isTrusted(hash: String): Boolean {
+        val trusted = trustedPeerHashes
+        return trusted.isNotEmpty() && trusted.contains(hash.uppercase())
     }
 }

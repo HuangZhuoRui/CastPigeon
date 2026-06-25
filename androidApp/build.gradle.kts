@@ -60,7 +60,18 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    signingConfigs {
+        create("suseRelease") {
+            storeFile = file("/Users/vincent/Desktop/SUSE-APP-Key/APP-Key.jks")
+            storePassword = "LinuxisUbuntu18"
+            keyAlias = "suse-app-key"
+            keyPassword = "LinuxisUbuntu18"
+        }
+    }
     buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("suseRelease")
+        }
         getByName("release") {
             isMinifyEnabled = false
         }

@@ -24,6 +24,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
+import android.bluetooth.BluetoothAdapter
 import android.content.ClipboardManager
 import android.content.ClipData
 import android.content.ClipboardManager.OnPrimaryClipChangedListener
@@ -41,7 +42,7 @@ import java.net.Socket
 class BleForegroundService : Service() {
 
     companion object {
-        private const val MAX_BLE_NOTIFICATION_BYTES = 420
+        private const val MAX_BLE_NOTIFICATION_BYTES = 12 * 1024
         private const val CHANNEL_ID = "CastPigeonBleChannel"
         private const val NOTIFICATION_ID = 1001
         var isInternalClipboardWrite = false
@@ -293,6 +294,21 @@ class BleForegroundService : Service() {
                 val id = intent.getIntExtra("EXTRA_NOTIF_ID", 1002)
                 val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 notificationManager.cancel(id)
+            } else if (intent?.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+                when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
+                    BluetoothAdapter.STATE_ON -> {
+                        android.util.Log.i("CastPigeon", "蓝牙已重新开启，恢复当前 BLE 角色")
+                        restartBleForCurrentRole("蓝牙重新开启")
+                    }
+                    BluetoothAdapter.STATE_OFF -> {
+                        android.util.Log.i("CastPigeon", "蓝牙已关闭，清理在线设备")
+                        UdpDiscovery.clearDiscoveredDevices()
+                        sendCapabilityLost("蓝牙关闭")
+                        AppConnectionManager.blePeripheral.disconnectCurrentDevice()
+                        AppConnectionManager.bleCentral.disconnect()
+                        AppConnectionManager.stateMachine.transitionTo(ConnectionState.Idle)
+                    }
+                }
             }
         }
     }
@@ -305,6 +321,7 @@ class BleForegroundService : Service() {
         val filter = IntentFilter().apply {
             addAction("com.suseoaa.castpigeon.ACTION_SYNC_CLIPBOARD")
             addAction("com.suseoaa.castpigeon.ACTION_COPY_CLIPBOARD")
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
         }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(clipboardSyncReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
@@ -312,7 +329,12 @@ class BleForegroundService : Service() {
             registerReceiver(clipboardSyncReceiver, filter)
         }
         if (Build.VERSION.SDK_INT >= 34) { // Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-            startForeground(NOTIFICATION_ID, buildNotification(dbHelper.getTodayMessageCount()), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification(dbHelper.getTodayMessageCount()),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            )
         } else {
             startForeground(NOTIFICATION_ID, buildNotification(dbHelper.getTodayMessageCount()))
         }
@@ -489,20 +511,96 @@ class BleForegroundService : Service() {
                     sendLocalCapabilityOverBle("BLE 连接就绪")
                     flushPendingClipboardToMacIfReady("BLE 连接就绪")
                 }
-                
-                // 如果当前处于工作模式但由于断线回退到了 Idle，Android端应重新开启广播
-                if (workMode == WorkMode.Working && state == ConnectionState.Idle && role == DeviceRole.Sender) {
-                    try {
-                        val deviceHash = getDeviceHash()
-                        AppConnectionManager.blePeripheral.startAdvertising(workMode, deviceHash) { newState, name ->
-                            AppConnectionManager.stateMachine.transitionTo(newState, name)
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
+
+                if (workMode == WorkMode.Working && role == DeviceRole.Sender && state == ConnectionState.PairingRequest) {
+                    val deviceName = AppConnectionManager.stateMachine.pairingDeviceName.value
+                    if (!deviceName.isNullOrBlank() && isTrustedBoundDeviceName(deviceName)) {
+                        android.util.Log.i("CastPigeon", "工作模式下已绑定设备自动通过握手: $deviceName")
+                        AppConnectionManager.stateMachine.transitionTo(ConnectionState.Transferring, deviceName)
                     }
+                }
+                
+                // 如果当前处于工作模式但由于断线回退到了 Idle，前台服务负责恢复 BLE 角色。
+                if (workMode == WorkMode.Working && state == ConnectionState.Idle) {
+                    restartBleForCurrentRole("后台状态恢复")
                 }
             }
         }
+    }
+
+    private fun restartBleForCurrentRole(reason: String) {
+        val workMode = AppConnectionManager.stateMachine.workMode.value
+        if (workMode != WorkMode.Working) return
+
+        when (AppConnectionManager.stateMachine.role.value) {
+            DeviceRole.Sender -> {
+                try {
+                    val deviceHash = getDeviceHash()
+                    AppConnectionManager.blePeripheral.updateTrustedPeerHashes(getBoundHashes())
+                    AppConnectionManager.blePeripheral.startAdvertising(workMode, deviceHash) { newState, name ->
+                        AppConnectionManager.stateMachine.transitionTo(newState, name)
+                    }
+                    android.util.Log.i("CastPigeon", "$reason: 已恢复 BLE 广播")
+                } catch (e: Exception) {
+                    android.util.Log.e("CastPigeon", "$reason: 恢复 BLE 广播失败", e)
+                }
+            }
+
+            DeviceRole.Receiver -> {
+                try {
+                    AppConnectionManager.bleCentral.startScanning(
+                        workMode,
+                        getBoundTargetHashes()
+                    ) { newState, name ->
+                        AppConnectionManager.stateMachine.transitionTo(newState, name)
+                    }
+                    android.util.Log.i("CastPigeon", "$reason: 已恢复 BLE 扫描")
+                } catch (e: Exception) {
+                    android.util.Log.e("CastPigeon", "$reason: 恢复 BLE 扫描失败", e)
+                }
+            }
+        }
+    }
+
+    private fun getBoundEntries(): Set<String> {
+        val prefs = getSharedPreferences("CastPigeonPrefs", Context.MODE_PRIVATE)
+        return prefs.getStringSet("BoundMacs", emptySet()).orEmpty()
+    }
+
+    private fun isTrustedBoundDeviceName(deviceName: String): Boolean {
+        val incomingParts = deviceName.split("|")
+        val incomingName = incomingParts.getOrNull(0).orEmpty()
+        val incomingHash = incomingParts.getOrNull(1)?.takeIf { it.isNotBlank() }
+        return getBoundEntries().any { entry ->
+            val parts = entry.split("|")
+            val name = parts.getOrNull(0).orEmpty()
+            val hash = parts.getOrNull(1)?.takeIf { it.isNotBlank() }
+            (!incomingHash.isNullOrBlank() && hash == incomingHash) ||
+                entry == deviceName ||
+                name == deviceName ||
+                name == incomingName
+        }
+    }
+
+    private fun getBoundHashes(): Set<String> {
+        return getBoundEntries().mapNotNull { entry ->
+            val parts = entry.split("|")
+            (parts.getOrNull(1)?.takeIf { it.isNotBlank() }
+                ?: entry.takeIf { it.matches(Regex("^[0-9A-Fa-f]{4,8}$")) })
+                ?.uppercase()
+        }.toSet()
+    }
+
+    private fun getBoundTargetHashes(): Set<ByteArray> {
+        return getBoundEntries().mapNotNull { entry ->
+            val parts = entry.split("|")
+            val hash = parts.getOrNull(1)?.takeIf { it.isNotBlank() }
+                ?: entry.takeIf { it.matches(Regex("^[0-9A-Fa-f]{4,8}$")) }
+                ?: return@mapNotNull null
+            runCatching {
+                hash.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            }.getOrNull()
+        }.toSet()
     }
 
     @android.annotation.SuppressLint("HardwareIds")
@@ -519,27 +617,55 @@ class BleForegroundService : Service() {
 
         fun fits(json: String): Boolean = json.encodeToByteArray().size <= MAX_BLE_NOTIFICATION_BYTES
 
-        var candidate = message.copy(iconBase64 = null)
-        var json = encode(candidate)
-        if (fits(json)) return json
-
-        var content = candidate.content
-        while (content.isNotEmpty()) {
-            content = content.dropLast(1)
-            candidate = candidate.copy(content = content)
-            json = encode(candidate)
-            if (fits(json)) return json
+        fun truncateText(text: String, maxChars: Int): String {
+            if (text.length <= maxChars) return text
+            if (maxChars <= 0) return ""
+            return text.take(maxChars).trimEnd() + "..."
         }
 
-        var title = candidate.title
-        while (title.isNotEmpty()) {
-            title = title.dropLast(1)
-            candidate = candidate.copy(title = title)
-            json = encode(candidate)
-            if (fits(json)) return json
+        fun shrinkToFit(base: com.suseoaa.castpigeon.shared.NotificationMessage): String? {
+            val fullJson = encode(base)
+            if (fits(fullJson)) return fullJson
+
+            fun bestWithTitle(title: String): String? {
+                var low = 0
+                var high = base.content.length
+                var best: String? = null
+                while (low <= high) {
+                    val mid = (low + high) / 2
+                    val candidate = base.copy(
+                        title = title,
+                        content = truncateText(base.content, mid)
+                    )
+                    val json = encode(candidate)
+                    if (fits(json)) {
+                        best = json
+                        low = mid + 1
+                    } else {
+                        high = mid - 1
+                    }
+                }
+                return best
+            }
+
+            bestWithTitle(base.title)?.let { return it }
+
+            val titleLimits = listOf(160, 120, 80, 48, 24, 0)
+            for (limit in titleLimits) {
+                bestWithTitle(truncateText(base.title, limit))?.let { return it }
+            }
+
+            return null
         }
 
-        return if (fits(json)) json else null
+        shrinkToFit(message)?.let { return it }
+
+        if (!message.iconBase64.isNullOrBlank()) {
+            android.util.Log.i("CastPigeon", "通知携带图标后超过 BLE 分片上限，降级为无图标发送: ${message.title}")
+            shrinkToFit(message.copy(iconBase64 = null))?.let { return it }
+        }
+
+        return null
     }
 
     private data class LocalNetworkCapability(
@@ -620,6 +746,15 @@ class BleForegroundService : Service() {
         val capability = parsePeerCapability(payload) ?: return
         val local = getLocalNetworkCapability()
         if (capability.hash == getDeviceHash().joinToString("") { "%02X".format(it) }) return
+        val boundHashes = getBoundHashes()
+        if (AppConnectionManager.stateMachine.workMode.value == WorkMode.Working &&
+            boundHashes.isNotEmpty() &&
+            !boundHashes.contains(capability.hash.uppercase())
+        ) {
+            UdpDiscovery.removeDiscoveredDevice(capability.hash)
+            android.util.Log.i("CastPigeon", "忽略未绑定设备能力信息: ${capability.hash} ${capability.deviceName}")
+            return
+        }
         if (capability.ip.isBlank() || capability.filePort == null) {
             UdpDiscovery.removeDiscoveredDevice(capability.hash)
             return

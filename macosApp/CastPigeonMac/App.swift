@@ -174,37 +174,76 @@ struct DashboardView: View {
             .padding(.horizontal, 40)
             
             // 实时调试日志
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("BLE 实时诊断日志：")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Button("插入测试日志") {
-                        viewModel.logDebug("这是一条手动插入的测试日志！")
-                    }
-                    .controlSize(.small)
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(viewModel.debugLogs.enumerated()), id: \.offset) { _, log in
-                            Text(log)
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.primary)
-                                .padding(.vertical, 2)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(height: 150)
-                .padding()
-                .background(Color(NSColor.textBackgroundColor).opacity(0.5))
-                .cornerRadius(8)
-            }
+            DebugLogPanel()
             .padding(.horizontal, 40)
             .padding(.bottom, 20)
             
             Spacer()
+        }
+    }
+}
+
+struct DebugLogPanel: View {
+    @EnvironmentObject var viewModel: MainViewModel
+    @State private var copiedHintVisible = false
+
+    private var logText: String {
+        viewModel.debugLogs.joined(separator: "\n")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("BLE 实时诊断日志：")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.secondary)
+                Text("可选中复制")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Spacer()
+                if copiedHintVisible {
+                    Text("已复制")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.green)
+                }
+                Button("插入测试日志") {
+                    viewModel.logDebug("这是一条手动插入的测试日志！")
+                }
+                .controlSize(.small)
+                Button("复制全部") {
+                    copyAllLogs()
+                }
+                .controlSize(.small)
+                Button("清空") {
+                    viewModel.debugLogs.removeAll()
+                }
+                .controlSize(.small)
+            }
+
+            TextEditor(text: .constant(logText.isEmpty ? "暂无日志" : logText))
+                .font(.system(.body, design: .monospaced))
+                .foregroundColor(logText.isEmpty ? .secondary : .primary)
+                .scrollContentBackground(.hidden)
+                .textSelection(.enabled)
+                .padding(8)
+                .frame(height: 170)
+                .background(Color(NSColor.textBackgroundColor).opacity(0.5))
+                .cornerRadius(8)
+                .contextMenu {
+                    Button("复制全部日志") {
+                        copyAllLogs()
+                    }
+                }
+        }
+    }
+
+    private func copyAllLogs() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(logText, forType: .string)
+        copiedHintVisible = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            copiedHintVisible = false
         }
     }
 }

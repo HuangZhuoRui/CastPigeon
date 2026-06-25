@@ -23,6 +23,11 @@ expect class BlePeripheral() {
     fun startAdvertising(workMode: WorkMode, deviceIdHash: ByteArray, onStateChange: (ConnectionState, String?) -> Unit)
 
     /**
+     * 更新工作模式下允许建立通道的已绑定设备 Hash。
+     */
+    fun updateTrustedPeerHashes(hashes: Set<String>)
+
+    /**
 *停止发送广播。
 *
 *当进入连接状态或主动回退至静默期时调用。

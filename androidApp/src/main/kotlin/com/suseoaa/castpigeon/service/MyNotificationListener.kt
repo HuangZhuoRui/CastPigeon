@@ -45,7 +45,7 @@ class MyNotificationListener : NotificationListenerService() {
             iconDrawable.setBounds(0, 0, canvas.width, canvas.height)
             iconDrawable.draw(canvas)
 
-            scaledBitmap = bitmap.scale(144, 144, true)
+            scaledBitmap = bitmap.scale(48, 48, true)
 
             ByteArrayOutputStream().use { outputStream ->
                 scaledBitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
