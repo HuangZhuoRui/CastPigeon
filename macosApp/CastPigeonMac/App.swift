@@ -122,6 +122,7 @@ final class MacUpdateManager: ObservableObject {
 
     private let repository: String = Bundle.main.infoDictionary?["CastPigeonGitHubRepository"] as? String ?? "suse-edu-cn/CastPigeon"
     private let macOSAssetPattern = #"^CastPigeon-macOS-v(.+)\.zip$"#
+    private let unifiedReleaseTagPattern = #"^v(.+)$"#
 
     func checkForUpdates(showNoUpdateMessage: Bool) async {
         guard !isChecking else { return }
@@ -213,10 +214,11 @@ final class MacUpdateManager: ObservableObject {
     private func fetchPlatformReleases() async throws -> [MacUpdateInfo] {
         let releases = try await fetchReleases()
         let regex = try NSRegularExpression(pattern: macOSAssetPattern)
+        let tagRegex = try NSRegularExpression(pattern: unifiedReleaseTagPattern, options: [.caseInsensitive])
         return releases
             .filter { !$0.draft && !$0.prerelease }
             .compactMap { release in
-                release.toMacUpdateInfo(regex: regex)
+                release.toMacUpdateInfo(assetRegex: regex, tagRegex: tagRegex)
             }
             .sorted { compareVersions($0.version, $1.version) > 0 }
     }
@@ -420,16 +422,28 @@ struct GitHubReleaseAssetResponse: Decodable {
 }
 
 extension GitHubReleaseResponse {
-    func toMacUpdateInfo(regex: NSRegularExpression) -> MacUpdateInfo? {
+    func toMacUpdateInfo(assetRegex: NSRegularExpression, tagRegex: NSRegularExpression) -> MacUpdateInfo? {
+        let tagRange = NSRange(tagName.startIndex..<tagName.endIndex, in: tagName)
+        guard let tagMatch = tagRegex.firstMatch(in: tagName, range: tagRange),
+              tagMatch.numberOfRanges > 1,
+              let tagVersionRange = Range(tagMatch.range(at: 1), in: tagName) else {
+            return nil
+        }
+        let tagVersion = String(tagName[tagVersionRange])
+
         for asset in assets {
             let range = NSRange(asset.name.startIndex..<asset.name.endIndex, in: asset.name)
-            guard let match = regex.firstMatch(in: asset.name, range: range),
+            guard let match = assetRegex.firstMatch(in: asset.name, range: range),
                   match.numberOfRanges > 1,
                   let versionRange = Range(match.range(at: 1), in: asset.name) else {
                 continue
             }
 
             let version = String(asset.name[versionRange])
+            // 统一发布后只接受 v版本号 Tag，并要求 Tag 版本与 macOS 压缩包版本一致，避免旧分平台 Release 干扰。
+            guard version == tagVersion else {
+                continue
+            }
             return MacUpdateInfo(
                 version: version,
                 tagName: tagName,
@@ -706,7 +720,7 @@ struct UpdatesView: View {
                         .foregroundColor(.secondary)
                     Text(updateManager.currentVersion)
                         .font(.system(size: 20, weight: .bold, design: .rounded))
-                    Text("macOS 版本会过滤 GitHub Release 中的 CastPigeon-macOS-v*.zip。")
+                    Text("macOS 版本会从统一 Release 中过滤 CastPigeon-macOS-v*.zip。")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 }

@@ -16,7 +16,7 @@ def latest_tag(tag_prefix: str) -> str | None:
 
 
 def commit_subjects(previous_tag: str | None) -> list[str]:
-    # 使用上一个同平台标签作为边界，避免 Android 与 macOS 的更新日志互相污染。
+    # 使用上一个统一版本标签作为边界，让 Android 与 macOS 共用同一份发布说明。
     range_args = [f"{previous_tag}..HEAD"] if previous_tag else []
     output = run_git(["log", "--no-merges", "--pretty=format:%s", *range_args])
     return [line.strip() for line in output.splitlines() if line.strip()]
@@ -58,10 +58,11 @@ def append_section(lines: list[str], title: str, entries: list[str]) -> None:
     lines.append("")
 
 
-def build_markdown(platform: str, version: str, previous_tag: str | None, subjects: list[str]) -> str:
+def build_markdown(version: str, previous_tag: str | None, subjects: list[str], platform: str | None = None) -> str:
     features, fixes, others = classify_subjects(subjects)
+    release_title = f"CastPigeon {platform} v{version}" if platform else f"CastPigeon v{version}"
     lines = [
-        f"## CastPigeon {platform} v{version}",
+        f"## {release_title}",
         "",
     ]
 
@@ -72,7 +73,7 @@ def build_markdown(platform: str, version: str, previous_tag: str | None, subjec
     if not features and not fixes and not others:
         lines.extend([
             "### 其他更新",
-            f"- 发布 CastPigeon {platform} v{version}",
+            f"- 发布 {release_title}",
             "",
         ])
 
@@ -88,7 +89,7 @@ def build_markdown(platform: str, version: str, previous_tag: str | None, subjec
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate CastPigeon GitHub Release changelog.")
-    parser.add_argument("--platform", required=True)
+    parser.add_argument("--platform")
     parser.add_argument("--version", required=True)
     parser.add_argument("--tag-prefix", required=True)
     parser.add_argument("--output", required=True)
@@ -96,7 +97,7 @@ def main() -> None:
 
     previous_tag = latest_tag(args.tag_prefix)
     subjects = commit_subjects(previous_tag)
-    markdown = build_markdown(args.platform, args.version, previous_tag, subjects)
+    markdown = build_markdown(args.version, previous_tag, subjects, args.platform)
     Path(args.output).write_text(markdown, encoding="utf-8")
 
 

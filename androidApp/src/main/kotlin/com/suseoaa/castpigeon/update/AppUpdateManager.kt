@@ -45,6 +45,7 @@ object AppUpdateManager {
 
     private val json = Json { ignoreUnknownKeys = true }
     private val androidAssetRegex = Regex("""^CastPigeon-Android-v(.+)\.apk$""")
+    private val unifiedReleaseTagRegex = Regex("""^v(.+)$""", RegexOption.IGNORE_CASE)
 
     suspend fun checkForUpdate(context: Context): Result<UpdateInfo?> = withContext(Dispatchers.IO) {
         runCatching {
@@ -171,9 +172,13 @@ object AppUpdateManager {
     }
 
     private fun GitHubRelease.toAndroidReleaseInfo(): ReleaseInfo? {
+        val tagVersion = unifiedReleaseTagRegex.matchEntire(tagName)?.groupValues?.getOrNull(1)
+            ?: return null
         val matchedAsset = assets.firstNotNullOfOrNull { asset ->
             val version = androidAssetRegex.matchEntire(asset.name)?.groupValues?.getOrNull(1)
                 ?: return@firstNotNullOfOrNull null
+            // 统一发布后只接受 v版本号 Tag，并要求 Tag 版本与 Android 安装包版本一致，避免旧分平台 Release 干扰。
+            if (version != tagVersion) return@firstNotNullOfOrNull null
             UpdateAsset(
                 versionName = version,
                 assetName = asset.name,
