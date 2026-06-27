@@ -121,7 +121,7 @@ final class MacUpdateManager: ObservableObject {
     let currentVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
 
     private let repository: String = Bundle.main.infoDictionary?["CastPigeonGitHubRepository"] as? String ?? "suse-edu-cn/CastPigeon"
-    private let macOSAssetPattern = #"^CastPigeon-macOS-v(.+)\.zip$"#
+    private let macOSAssetPattern = #"^CastPigeon-macOS-v(.+)\.dmg$"#
     private let unifiedReleaseTagPattern = #"^v(.+)$"#
 
     func checkForUpdates(showNoUpdateMessage: Bool) async {
