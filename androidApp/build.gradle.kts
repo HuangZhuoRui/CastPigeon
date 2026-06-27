@@ -63,8 +63,8 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
         //noinspection OldTargetApi
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 102
-        versionName = "1.0.2"
+        versionCode = 103
+        versionName = "1.0.3"
         buildConfigField("String", "GITHUB_REPOSITORY", "\"${releaseRepository.get()}\"")
     }
     packaging {

@@ -172,40 +172,46 @@ jobs:
   build-macos:
     needs: check-versions
     if: needs.check-versions.outputs.release_changed == 'true'
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Build ad-hoc signed macOS App
+      - name: Build macOS App & Package DMG
         shell: bash
         run: |
-          xcodebuild \
-            -project macosApp/CastPigeonMac.xcodeproj \
+          cd macosApp
+
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$LATEST_XCODE" ]; then
+            sudo xcode-select -s "$LATEST_XCODE"
+            echo "使用 Xcode: $LATEST_XCODE"
+          fi
+
+          xcodebuild clean build \
+            -project CastPigeonMac.xcodeproj \
             -scheme CastPigeonMac \
             -configuration Release \
-            -derivedDataPath "$RUNNER_TEMP/CastPigeonDerivedData" \
-            INFOPLIST_KEY_CastPigeonGitHubRepository="${GITHUB_REPOSITORY}" \
-            CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="-" \
-            CODE_SIGNING_ALLOWED=YES \
             CODE_SIGNING_REQUIRED=YES \
-            build
+            -derivedDataPath derived_data
 
-          APP="$RUNNER_TEMP/CastPigeonDerivedData/Build/Products/Release/CastPigeon.app"
-          if [ ! -d "$APP" ]; then
+          APP_PATH=$(find derived_data/Build/Products/Release -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
             echo "未找到 macOS app bundle。"
             exit 1
           fi
+          APP_NAME=$(basename "$APP_PATH" .app)
+          echo "Found app at: $APP_PATH"
 
-          mkdir -p dist
-          OUT_ZIP="dist/CastPigeon-macOS-v${{ needs.check-versions.outputs.release_version }}.zip"
-          ditto -c -k --keepParent "$APP" "$OUT_ZIP"
+          mkdir -p ../dist
+          OUT_DMG="../dist/CastPigeon-macOS-v${{ needs.check-versions.outputs.release_version }}.dmg"
+          hdiutil create -volname "$APP_NAME" -srcfolder "$APP_PATH" -ov -format UDZO "$OUT_DMG"
           (
-            cd dist
-            shasum -a 256 "$(basename "$OUT_ZIP")" > "$(basename "$OUT_ZIP").sha256"
+            cd ../dist
+            shasum -a 256 "$(basename "$OUT_DMG")" > "$(basename "$OUT_DMG").sha256"
           )
 
       - name: Upload macOS Assets
@@ -213,8 +219,8 @@ jobs:
         with:
           name: macos-release-assets
           path: |
-            dist/CastPigeon-macOS-v${{ needs.check-versions.outputs.release_version }}.zip
-            dist/CastPigeon-macOS-v${{ needs.check-versions.outputs.release_version }}.zip.sha256
+            dist/CastPigeon-macOS-v${{ needs.check-versions.outputs.release_version }}.dmg
+            dist/CastPigeon-macOS-v${{ needs.check-versions.outputs.release_version }}.dmg.sha256
           if-no-files-found: error
 
   publish-release:
@@ -254,7 +260,7 @@ jobs:
           files: |
             dist/CastPigeon-Android-v${{ needs.check-versions.outputs.release_version }}.apk
             dist/CastPigeon-Android-v${{ needs.check-versions.outputs.release_version }}.apk.sha256
-            dist/CastPigeon-macOS-v${{ needs.check-versions.outputs.release_version }}.zip
-            dist/CastPigeon-macOS-v${{ needs.check-versions.outputs.release_version }}.zip.sha256
+            dist/CastPigeon-macOS-v${{ needs.check-versions.outputs.release_version }}.dmg
+            dist/CastPigeon-macOS-v${{ needs.check-versions.outputs.release_version }}.dmg.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
