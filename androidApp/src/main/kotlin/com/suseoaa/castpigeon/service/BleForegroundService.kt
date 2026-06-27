@@ -1192,7 +1192,8 @@ class BleForegroundService : Service() {
         )
         
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(com.suseoaa.castpigeon.R.mipmap.ic_launcher_round)
+            .setSmallIcon(com.suseoaa.castpigeon.R.drawable.ic_stat_castpigeon)
+            .setColor(0xFF3DDC84.toInt())
             .setContentTitle("CastPigeon 正在运行")
             .setContentText("今日已收到 $count 条消息")
             .setPriority(NotificationCompat.PRIORITY_LOW)
