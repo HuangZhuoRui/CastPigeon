@@ -15,8 +15,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A1B2C3D4E5F6A7B8C9D0E500"
-               BuildableName = "CastPigeon.app"
-               BlueprintName = "CastPigeon"
+               BuildableName = "CastPigeonMac.app"
+               BlueprintName = "CastPigeonMac"
                ReferencedContainer = "container:CastPigeonMac.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -45,8 +45,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A1B2C3D4E5F6A7B8C9D0E500"
-            BuildableName = "CastPigeon.app"
-            BlueprintName = "CastPigeon"
+            BuildableName = "CastPigeonMac.app"
+            BlueprintName = "CastPigeonMac"
             ReferencedContainer = "container:CastPigeonMac.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -62,8 +62,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A1B2C3D4E5F6A7B8C9D0E500"
-            BuildableName = "CastPigeon.app"
-            BlueprintName = "CastPigeon"
+            BuildableName = "CastPigeonMac.app"
+            BlueprintName = "CastPigeonMac"
             ReferencedContainer = "container:CastPigeonMac.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

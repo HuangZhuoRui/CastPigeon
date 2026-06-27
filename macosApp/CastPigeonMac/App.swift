@@ -1,57 +1,16 @@
 import SwiftUI
 import AppKit
 import UserNotifications
-import CoreServices
 
 // MARK: - AppDelegate for Notifications
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-    private let launchServicesRegistrationKey = "CastPigeonLaunchServicesRegistrationSignature"
-
     func applicationDidFinishLaunching(_ notification: Foundation.Notification) {
-        registerCurrentBundleWithLaunchServicesIfNeeded()
         UNUserNotificationCenter.current().delegate = self
-        requestNotificationAuthorization()
     }
     
     // 允许在应用处于前台时展示通知弹窗
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound, .badge])
-    }
-
-    private func registerCurrentBundleWithLaunchServicesIfNeeded() {
-        let bundle = Bundle.main
-        let bundleURL = bundle.bundleURL.standardizedFileURL
-        let bundleIdentifier = bundle.bundleIdentifier ?? "unknown"
-        let shortVersion = bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
-        let buildVersion = bundle.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
-        let registrationSignature = [
-            bundleIdentifier,
-            shortVersion,
-            buildVersion,
-            bundleURL.path
-        ].joined(separator: "|")
-
-        let defaults = UserDefaults.standard
-        guard defaults.string(forKey: launchServicesRegistrationKey) != registrationSignature else {
-            return
-        }
-
-        let status = LSRegisterURL(bundleURL as CFURL, true)
-        if status == noErr {
-            defaults.set(registrationSignature, forKey: launchServicesRegistrationKey)
-        } else {
-            print("LaunchServices registration failed: \(status)")
-        }
-    }
-
-    private func requestNotificationAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if granted {
-                print("Notification permission granted")
-            } else if let error = error {
-                print("Notification permission error: \(error)")
-            }
-        }
     }
 }
 
@@ -65,6 +24,15 @@ struct CastPigeonMacApp: App {
     init() {
         // 使用常规的独立窗口应用模式
         NSApplication.shared.setActivationPolicy(.regular)
+
+        // 请求通知权限
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if granted {
+                print("Notification permission granted")
+            } else if let error = error {
+                print("Notification permission error: \(error)")
+            }
+        }
     }
 
     var body: some Scene {

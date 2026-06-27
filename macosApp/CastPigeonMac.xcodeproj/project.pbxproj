@@ -21,7 +21,7 @@
 		48883F9F2A98DBC7B8BE3DF3 /* SwiftUdpDiscovery.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SwiftUdpDiscovery.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D0E200 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D0E202 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		A1B2C3D4E5F6A7B8C9D0E203 /* CastPigeon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CastPigeon.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1B2C3D4E5F6A7B8C9D0E203 /* CastPigeonMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CastPigeonMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2FB73B0F10A5986B13E0997 /* Models.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		C3F71A8B4E244F4AA9F7E000 /* LanFileTransferManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LanFileTransferManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -69,7 +69,7 @@
 		A1B2C3D4E5F6A7B8C9D0E402 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A1B2C3D4E5F6A7B8C9D0E203 /* CastPigeon.app */,
+				A1B2C3D4E5F6A7B8C9D0E203 /* CastPigeonMac.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -94,9 +94,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A1B2C3D4E5F6A7B8C9D0E500 /* CastPigeon */ = {
+		A1B2C3D4E5F6A7B8C9D0E500 /* CastPigeonMac */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A1B2C3D4E5F6A7B8C9D0E600 /* Build configuration list for PBXNativeTarget "CastPigeon" */;
+			buildConfigurationList = A1B2C3D4E5F6A7B8C9D0E600 /* Build configuration list for PBXNativeTarget "CastPigeonMac" */;
 			buildPhases = (
 				A1B2C3D4E5F6A7B8C9D0E501 /* Sources */,
 				A1B2C3D4E5F6A7B8C9D0E300 /* Frameworks */,
@@ -106,9 +106,9 @@
 			);
 			dependencies = (
 			);
-			name = CastPigeon;
-			productName = CastPigeon;
-			productReference = A1B2C3D4E5F6A7B8C9D0E203 /* CastPigeon.app */;
+			name = CastPigeonMac;
+			productName = CastPigeonMac;
+			productReference = A1B2C3D4E5F6A7B8C9D0E203 /* CastPigeonMac.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -139,7 +139,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A1B2C3D4E5F6A7B8C9D0E500 /* CastPigeon */,
+				A1B2C3D4E5F6A7B8C9D0E500 /* CastPigeonMac */,
 			);
 		};
 /* End PBXProject section */
@@ -217,8 +217,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1.0.8;
-				CASTPIGEON_DISPLAY_NAME = "CastPigeon Debug";
+				CURRENT_PROJECT_VERSION = 1.0.9;
 				DEVELOPMENT_TEAM = PXL9279SFY;
 				ENABLE_DEBUG_DYLIB = NO;
 				INFOPLIST_FILE = CastPigeonMac/Info.plist;
@@ -226,9 +225,9 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.8;
-				PRODUCT_BUNDLE_IDENTIFIER = com.suseoaa.castpigeon.macos.debug;
-				PRODUCT_NAME = CastPigeon;
+				MARKETING_VERSION = 1.0.9;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yourcompany.notilinker.macos;
+				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -243,17 +242,16 @@
 				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1.0.8;
-				CASTPIGEON_DISPLAY_NAME = CastPigeon;
+				CURRENT_PROJECT_VERSION = 1.0.9;
 				DEVELOPMENT_TEAM = PXL9279SFY;
 				INFOPLIST_FILE = CastPigeonMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.8;
-				PRODUCT_BUNDLE_IDENTIFIER = com.suseoaa.castpigeon.macos;
-				PRODUCT_NAME = CastPigeon;
+				MARKETING_VERSION = 1.0.9;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yourcompany.notilinker.macos;
+				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -262,7 +260,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A1B2C3D4E5F6A7B8C9D0E600 /* Build configuration list for PBXNativeTarget "CastPigeon" */ = {
+		A1B2C3D4E5F6A7B8C9D0E600 /* Build configuration list for PBXNativeTarget "CastPigeonMac" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A1B2C3D4E5F6A7B8C9D0E803 /* Debug */,
