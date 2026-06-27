@@ -1,21 +1,11 @@
 import SwiftUI
 import AppKit
-import CoreServices
 import UserNotifications
 
 // MARK: - AppDelegate for Notifications
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Foundation.Notification) {
-        registerBundleForSystemServices()
         UNUserNotificationCenter.current().delegate = self
-    }
-
-    private func registerBundleForSystemServices() {
-        let bundleURL = Bundle.main.bundleURL as CFURL
-        let status = LSRegisterURL(bundleURL, true)
-        if status != noErr {
-            print("LaunchServices registration failed: \(status)")
-        }
     }
     
     // 允许在应用处于前台时展示通知弹窗
