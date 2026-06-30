@@ -16,12 +16,18 @@ class _ThemePreferenceSelector extends StatelessWidget {
           AppThemePreference.dark => 1,
           AppThemePreference.system => 2,
         };
+        const buttonSize = 30.0;
+        const borderWidth = 1.0;
+        const indicatorInset = 3.0;
+        const selectorWidth = buttonSize * 3 + borderWidth * 2;
         return Container(
-          width: 104,
-          height: 34,
+          width: selectorWidth,
+          height: buttonSize + borderWidth * 2,
           decoration: BoxDecoration(
             color: colors.surfaceContainerHighest.withValues(alpha: 0.72),
-            borderRadius: BorderRadius.circular(17),
+            borderRadius: BorderRadius.circular(
+              (buttonSize + borderWidth * 2) / 2,
+            ),
             border: Border.all(color: _outlineColor(context)),
             boxShadow: [
               BoxShadow(
@@ -37,53 +43,57 @@ class _ThemePreferenceSelector extends StatelessWidget {
               AnimatedPositioned(
                 duration: const Duration(milliseconds: 230),
                 curve: Curves.easeOutCubic,
-                left: 3 + selectedIndex * 32,
-                top: 3,
-                width: 32,
-                height: 28,
+                left: indicatorInset + selectedIndex * buttonSize,
+                top: indicatorInset,
+                width: buttonSize - indicatorInset * 2,
+                height: buttonSize - indicatorInset * 2,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     color: colors.primaryContainer,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(
+                      (buttonSize - indicatorInset * 2) / 2,
+                    ),
                   ),
                 ),
               ),
-              Row(
-                children: [
-                  _ThemePreferenceButton(
-                    preference: AppThemePreference.light,
-                    selected:
-                        themeController.themePreference ==
-                        AppThemePreference.light,
-                    onTap: () => unawaited(
-                      themeController.setThemePreference(
-                        AppThemePreference.light,
+              Positioned.fill(
+                child: Row(
+                  children: [
+                    _ThemePreferenceButton(
+                      preference: AppThemePreference.light,
+                      selected:
+                          themeController.themePreference ==
+                          AppThemePreference.light,
+                      onTap: () => unawaited(
+                        themeController.setThemePreference(
+                          AppThemePreference.light,
+                        ),
                       ),
                     ),
-                  ),
-                  _ThemePreferenceButton(
-                    preference: AppThemePreference.dark,
-                    selected:
-                        themeController.themePreference ==
-                        AppThemePreference.dark,
-                    onTap: () => unawaited(
-                      themeController.setThemePreference(
-                        AppThemePreference.dark,
+                    _ThemePreferenceButton(
+                      preference: AppThemePreference.dark,
+                      selected:
+                          themeController.themePreference ==
+                          AppThemePreference.dark,
+                      onTap: () => unawaited(
+                        themeController.setThemePreference(
+                          AppThemePreference.dark,
+                        ),
                       ),
                     ),
-                  ),
-                  _ThemePreferenceButton(
-                    preference: AppThemePreference.system,
-                    selected:
-                        themeController.themePreference ==
-                        AppThemePreference.system,
-                    onTap: () => unawaited(
-                      themeController.setThemePreference(
-                        AppThemePreference.system,
+                    _ThemePreferenceButton(
+                      preference: AppThemePreference.system,
+                      selected:
+                          themeController.themePreference ==
+                          AppThemePreference.system,
+                      onTap: () => unawaited(
+                        themeController.setThemePreference(
+                          AppThemePreference.system,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -113,10 +123,10 @@ class _ThemePreferenceButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(15),
         child: SizedBox(
-          width: 34,
-          height: 34,
+          width: 30,
+          height: 30,
           child: Center(
             child: AnimatedScale(
               duration: const Duration(milliseconds: 180),
@@ -145,20 +155,30 @@ class _ThemePreferenceGlyph extends StatelessWidget {
     return switch (preference) {
       AppThemePreference.light => Icon(
         Icons.light_mode_rounded,
-        size: 18,
+        size: 16,
         color: color,
       ),
       AppThemePreference.dark => Icon(
         Icons.dark_mode_rounded,
-        size: 18,
+        size: 16,
         color: color,
       ),
-      AppThemePreference.system => Text(
-        'A',
-        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-          color: color,
-          fontWeight: FontWeight.w900,
-          height: 1,
+      AppThemePreference.system => SizedBox.square(
+        dimension: 16,
+        child: Center(
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: Text(
+              'A',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: color,
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+                height: 1,
+              ),
+            ),
+          ),
         ),
       ),
     };

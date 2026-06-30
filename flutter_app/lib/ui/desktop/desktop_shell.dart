@@ -141,6 +141,8 @@ class _DesktopSidebar extends StatelessWidget {
                     Expanded(
                       child: Text(
                         snapshot.workModeLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: _mediumStyle(context),
                       ),
                     ),
