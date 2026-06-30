@@ -58,13 +58,13 @@ class _CastPigeonHomeState extends State<CastPigeonHome> {
   CastPigeonSnapshot _snapshot = CastPigeonSnapshot.empty;
   AppTab _tab = AppTab.dashboard;
   bool _showMacPairingSheet = false;
+  double _mobilePagePosition = AppTab.dashboard.index.toDouble();
+  bool _mobilePageDragging = false;
   StreamSubscription<CastPigeonSnapshot>? _subscription;
-  late final PageController _mobilePageController;
 
   @override
   void initState() {
     super.initState();
-    _mobilePageController = PageController(initialPage: _tab.index);
     _subscription = widget.api.snapshotStream.listen((snapshot) {
       if (mounted) {
         final previousBoundHashes = _snapshot.boundDevices
@@ -90,7 +90,6 @@ class _CastPigeonHomeState extends State<CastPigeonHome> {
   @override
   void dispose() {
     _subscription?.cancel();
-    _mobilePageController.dispose();
     widget.api.dispose();
     super.dispose();
   }
@@ -142,38 +141,117 @@ class _CastPigeonHomeState extends State<CastPigeonHome> {
     if (tab == _tab) {
       return;
     }
-    setState(() => _tab = tab);
-    if (!_isDesktopPlatform && _mobilePageController.hasClients) {
-      unawaited(
-        _mobilePageController.animateToPage(
-          tab.index,
-          duration: const Duration(milliseconds: 340),
-          curve: Curves.easeOutCubic,
-        ),
-      );
-    }
+    setState(() {
+      _tab = tab;
+      _mobilePageDragging = false;
+      _mobilePagePosition = tab.index.toDouble();
+    });
   }
 
   Widget _buildMobileTabSwitcher() {
-    return PageView(
-      controller: _mobilePageController,
-      physics: const PageScrollPhysics(),
-      onPageChanged: (index) {
-        final nextTab = AppTab.values[index];
-        if (nextTab != _tab) {
-          setState(() => _tab = nextTab);
-        }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final pageWidth = constraints.maxWidth;
+        final lastPage = (AppTab.values.length - 1).toDouble();
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onHorizontalDragStart: (_) {
+            _mobilePageDragging = true;
+          },
+          onHorizontalDragUpdate: (details) {
+            if (pageWidth <= 0) {
+              return;
+            }
+            setState(() {
+              _mobilePageDragging = true;
+              _mobilePagePosition =
+                  (_mobilePagePosition - details.delta.dx / pageWidth)
+                      .clamp(0.0, lastPage)
+                      .toDouble();
+            });
+          },
+          onHorizontalDragEnd: (details) {
+            final velocity = details.primaryVelocity ?? 0;
+            var target = _mobilePagePosition.round();
+            if (velocity.abs() > 520) {
+              target = velocity < 0
+                  ? _mobilePagePosition.floor() + 1
+                  : _mobilePagePosition.ceil() - 1;
+            }
+            target = target.clamp(0, AppTab.values.length - 1);
+            setState(() {
+              _mobilePageDragging = false;
+              _mobilePagePosition = target.toDouble();
+              _tab = AppTab.values[target];
+            });
+          },
+          onHorizontalDragCancel: () {
+            setState(() {
+              _mobilePageDragging = false;
+              _mobilePagePosition = _tab.index.toDouble();
+            });
+          },
+          child: ClipRect(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween<double>(end: _mobilePagePosition),
+              duration: _mobilePageDragging
+                  ? Duration.zero
+                  : const Duration(milliseconds: 340),
+              curve: Curves.easeOutCubic,
+              builder: (context, position, child) {
+                return Stack(
+                  clipBehavior: Clip.hardEdge,
+                  children: [
+                    _TranslatedMobilePage(
+                      offsetX: 0 - position,
+                      child: _DashboardPage(
+                        api: widget.api,
+                        snapshot: _snapshot,
+                      ),
+                    ),
+                    _TranslatedMobilePage(
+                      offsetX: 1 - position,
+                      child: _HistoryPage(api: widget.api, snapshot: _snapshot),
+                    ),
+                    _TranslatedMobilePage(
+                      offsetX: 2 - position,
+                      child: _SettingsPage(
+                        api: widget.api,
+                        snapshot: _snapshot,
+                      ),
+                    ),
+                    _TranslatedMobilePage(
+                      offsetX: 3 - position,
+                      child: _InfoPage(
+                        api: widget.api,
+                        snapshot: _snapshot,
+                        themeController: widget.themeController,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
       },
-      children: [
-        _DashboardPage(api: widget.api, snapshot: _snapshot),
-        _HistoryPage(api: widget.api, snapshot: _snapshot),
-        _SettingsPage(api: widget.api, snapshot: _snapshot),
-        _InfoPage(
-          api: widget.api,
-          snapshot: _snapshot,
-          themeController: widget.themeController,
-        ),
-      ],
+    );
+  }
+}
+
+class _TranslatedMobilePage extends StatelessWidget {
+  const _TranslatedMobilePage({required this.offsetX, required this.child});
+
+  final double offsetX;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: FractionalTranslation(
+        translation: Offset(offsetX, 0),
+        child: child,
+      ),
     );
   }
 }
@@ -189,57 +267,88 @@ class _BottomNavigationBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const radius = 22.0;
+    const radius = 24.0;
     final colors = Theme.of(context).colorScheme;
     final selectedColor = colors.primaryContainer;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: Container(
-        decoration: BoxDecoration(
-          color: colors.surfaceContainerHighest.withValues(alpha: 0.92),
-          border: Border.all(color: _outlineColor(context)),
-          borderRadius: BorderRadius.circular(radius),
-          boxShadow: [
-            BoxShadow(
-              color: _shadowColor(context),
-              blurRadius: 18,
-              offset: const Offset(0, 10),
-            ),
-          ],
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Row(
-            children: [
-              for (final tab in AppTab.values)
-                Expanded(
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOutCubic,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: selected == tab
-                          ? selectedColor
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(radius - 7),
-                    ),
-                    child: IconButton(
-                      padding: EdgeInsets.zero,
-                      visualDensity: VisualDensity.compact,
-                      isSelected: selected == tab,
-                      onPressed: () => onSelect(tab),
-                      icon: Icon(tab.icon, size: 21),
-                      color: colors.onSurfaceVariant,
-                      selectedIcon: Icon(
-                        tab.icon,
-                        size: 21,
-                        color: colors.primary,
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        widthFactor: 1,
+        heightFactor: 1,
+        child: Container(
+          decoration: BoxDecoration(
+            color: colors.surfaceContainerHighest.withValues(alpha: 0.92),
+            border: Border.all(color: _outlineColor(context)),
+            borderRadius: BorderRadius.circular(radius),
+            boxShadow: [
+              BoxShadow(
+                color: _shadowColor(context),
+                blurRadius: 18,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Padding(
+            padding: const EdgeInsets.all(5),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final tab in AppTab.values)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      width: 58,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: selected == tab
+                            ? selectedColor
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(radius - 5),
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.circular(radius - 5),
+                        child: InkWell(
+                          onTap: () => onSelect(tab),
+                          borderRadius: BorderRadius.circular(radius - 5),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                tab.icon,
+                                size: 21,
+                                color: selected == tab
+                                    ? colors.primary
+                                    : colors.onSurfaceVariant,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                tab.mobileTitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.clip,
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: selected == tab
+                                          ? colors.primary
+                                          : colors.onSurfaceVariant,
+                                      fontWeight: selected == tab
+                                          ? FontWeight.w800
+                                          : FontWeight.w600,
+                                      height: 1,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

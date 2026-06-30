@@ -31,7 +31,7 @@ class _InfoPage extends StatelessWidget {
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 280),
                 child: Text(
-                  '超越屏幕边界，让数据像信鸽一样自由翱翔',
+                  '超越屏幕边界\n让数据像信鸽一样自由翱翔',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
