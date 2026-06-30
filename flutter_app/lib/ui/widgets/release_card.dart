@@ -7,6 +7,7 @@ class _ReleaseCard extends StatelessWidget {
     required this.release,
     this.downloadLabel = '下载 APK',
     this.redownloadLabel = '重新下载 APK',
+    this.installLabel = '安装',
   });
 
   final CastPigeonApi api;
@@ -14,10 +15,16 @@ class _ReleaseCard extends StatelessWidget {
   final ReleaseInfo release;
   final String downloadLabel;
   final String redownloadLabel;
+  final String installLabel;
 
   @override
   Widget build(BuildContext context) {
     final download = release.download;
+    final isBusy =
+        download != null &&
+        (download.isInstalling ||
+            download.isVerifying ||
+            download.progress >= 0 && download.progress < 100);
     return _SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -32,16 +39,19 @@ class _ReleaseCard extends StatelessWidget {
           _ReleaseMarkdownBody(body: release.body),
           if (download != null &&
               (download.progress >= 0 && download.progress < 100 ||
-                  download.isVerifying)) ...[
+                  download.isVerifying ||
+                  download.isInstalling)) ...[
             const SizedBox(height: 10),
             LinearProgressIndicator(
-              value: download.progress < 0
+              value: download.isInstalling || download.progress < 0
                   ? null
                   : download.progress.clamp(0, 100) / 100,
             ),
             const SizedBox(height: 4),
             Text(
-              download.isVerifying
+              download.isInstalling
+                  ? '正在启动安装器...'
+                  : download.isVerifying
                   ? '正在校验安装包...'
                   : '${download.progress.clamp(0, 100)}%',
               style: _subtleStyle(context),
@@ -63,10 +73,7 @@ class _ReleaseCard extends StatelessWidget {
             spacing: 8,
             children: [
               FilledButton(
-                onPressed:
-                    download != null &&
-                        (download.progress >= 0 && download.progress < 100 ||
-                            download.isVerifying)
+                onPressed: isBusy
                     ? null
                     : () => unawaited(api.downloadRelease(release.tagName)),
                 child: Text(
@@ -75,9 +82,10 @@ class _ReleaseCard extends StatelessWidget {
               ),
               if (download?.isVerified == true)
                 OutlinedButton(
-                  onPressed: () =>
-                      unawaited(api.installRelease(release.tagName)),
-                  child: const Text('安装'),
+                  onPressed: isBusy
+                      ? null
+                      : () => unawaited(api.installRelease(release.tagName)),
+                  child: Text(installLabel),
                 ),
             ],
           ),

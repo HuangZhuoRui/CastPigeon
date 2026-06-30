@@ -234,6 +234,7 @@
 				33CC10E92044A3C60003C045 /* Sources */,
 				33CC10EA2044A3C60003C045 /* Frameworks */,
 				33CC10EB2044A3C60003C045 /* Resources */,
+				9D3920403B7D4B2B9B68A79E /* Build Updater Helper */,
 				33CC110E2044A8840003C045 /* Bundle Framework */,
 				9D39202B3B7D4B2B9B68A79E /* Copy KMP Core Library */,
 				3399D490228B24CF009A79C7 /* ShellScript */,
@@ -362,6 +363,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$FLUTTER_ROOT\"/packages/flutter_tools/bin/macos_assemble.sh && touch Flutter/ephemeral/tripwire";
+		};
+		9D3920403B7D4B2B9B68A79E /* Build Updater Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/Runner/Updater/CastPigeonUpdater.swift",
+			);
+			name = "Build Updater Helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/CastPigeonUpdater",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nHELPER_SOURCE=\"$PROJECT_DIR/Runner/Updater/CastPigeonUpdater.swift\"\nHELPER_OUTPUT=\"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/CastPigeonUpdater\"\nHELPER_WORK_DIR=\"$DERIVED_FILE_DIR/CastPigeonUpdater\"\nmkdir -p \"$(dirname \"$HELPER_OUTPUT\")\" \"$HELPER_WORK_DIR\"\nARCHS_VALUE=\"${ARCHS:-${CURRENT_ARCH:-$(uname -m)}}\"\nHELPER_ARCH_OUTPUTS=\"\"\nDEPLOYMENT_TARGET=\"${MACOSX_DEPLOYMENT_TARGET:-12.0}\"\nfor XCODE_ARCH in $ARCHS_VALUE; do\n  if [ \"$XCODE_ARCH\" = \"undefined_arch\" ]; then\n    continue\n  fi\n  ARCH_OUTPUT=\"$HELPER_WORK_DIR/CastPigeonUpdater-$XCODE_ARCH\"\n  xcrun swiftc -target \"$XCODE_ARCH-apple-macos$DEPLOYMENT_TARGET\" -sdk \"$SDKROOT\" \"$HELPER_SOURCE\" -o \"$ARCH_OUTPUT\"\n  HELPER_ARCH_OUTPUTS=\"$HELPER_ARCH_OUTPUTS $ARCH_OUTPUT\"\ndone\nset -- $HELPER_ARCH_OUTPUTS\nif [ \"$#\" -eq 0 ]; then\n  FALLBACK_ARCH=\"$(uname -m)\"\n  xcrun swiftc -target \"$FALLBACK_ARCH-apple-macos$DEPLOYMENT_TARGET\" -sdk \"$SDKROOT\" \"$HELPER_SOURCE\" -o \"$HELPER_OUTPUT\"\nelif [ \"$#\" -eq 1 ]; then\n  cp \"$1\" \"$HELPER_OUTPUT\"\nelse\n  lipo -create \"$@\" -output \"$HELPER_OUTPUT\"\nfi\nchmod +x \"$HELPER_OUTPUT\"\n";
 		};
 		9D39202B3B7D4B2B9B68A79E /* Copy KMP Core Library */ = {
 			isa = PBXShellScriptBuildPhase;

@@ -140,7 +140,9 @@ class MacOSCastApi implements CastPigeonApi {
   Future<bool> selectPrivilegeMode(String mode) async => false;
 
   @override
-  Future<bool> installRelease(String tagName) async => false;
+  Future<bool> installRelease(String tagName) {
+    return _boolMethod('installRelease', <String, Object?>{'tagName': tagName});
+  }
 
   @override
   Future<bool> sendTestNotification() async => false;

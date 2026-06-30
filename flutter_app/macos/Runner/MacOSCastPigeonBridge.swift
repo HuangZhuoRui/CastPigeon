@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CryptoKit
 import FlutterMacOS
 import UserNotifications
 
@@ -175,6 +176,12 @@ final class MacOSCastPigeonBridge: NSObject, FlutterStreamHandler, UNUserNotific
         self?.emitSnapshot()
       }
       result(true)
+    case "installRelease":
+      let started = updateManager.install(tagName: arguments["tagName"] as? String ?? "") { [weak self] snapshot in
+        self?.latestUpdateState = snapshot
+        self?.emitSnapshot()
+      }
+      result(started)
     case "openBluetoothPrivacySettings":
       viewModel.openBluetoothPrivacySettings()
       result(true)
@@ -439,6 +446,8 @@ private struct FlutterMacRelease {
   let body: String
   let assetName: String
   let downloadURL: String
+  let checksumURL: String?
+  let digest: String?
 
   func dictionary(download: FlutterMacDownloadState?) -> [String: Any] {
     [
@@ -454,15 +463,41 @@ private struct FlutterMacRelease {
 
 private struct FlutterMacDownloadState {
   let progress: Int
+  let isVerifying: Bool
+  let isVerified: Bool
+  let isInstalling: Bool
   let message: String?
+  let localFilePath: String?
+
+  init(
+    progress: Int,
+    isVerifying: Bool = false,
+    isVerified: Bool = false,
+    isInstalling: Bool = false,
+    message: String? = nil,
+    localFilePath: String? = nil
+  ) {
+    self.progress = progress
+    self.isVerifying = isVerifying
+    self.isVerified = isVerified
+    self.isInstalling = isInstalling
+    self.message = message
+    self.localFilePath = localFilePath
+  }
 
   func dictionary() -> [String: Any] {
     [
       "progress": progress,
-      "isVerifying": false,
-      "isVerified": progress == 100,
-      "message": jsonValue(message)
+      "isVerifying": isVerifying,
+      "isVerified": isVerified,
+      "isInstalling": isInstalling,
+      "message": jsonValue(message),
+      "localFilePath": jsonValue(localFilePath)
     ]
+  }
+
+  var isBusy: Bool {
+    isInstalling || isVerifying || (progress >= 0 && progress < 100)
   }
 }
 
@@ -471,13 +506,23 @@ private func jsonValue<T>(_ value: T?) -> Any {
   return value
 }
 
-private final class FlutterMacUpdateManager {
+private final class FlutterMacUpdateManager: NSObject, URLSessionDownloadDelegate {
+  private struct DownloadContext {
+    let release: FlutterMacRelease
+    let destination: URL
+    let completion: (FlutterMacUpdateSnapshot) -> Void
+  }
+
   private let repository = Bundle.main.infoDictionary?["CastPigeonGitHubRepository"] as? String ?? "suse-edu-cn/CastPigeon"
   private let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
   private var snapshot: FlutterMacUpdateSnapshot
+  private var downloadContexts: [Int: DownloadContext] = [:]
+  private lazy var downloadSession = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
 
+  override
   init() {
     snapshot = FlutterMacUpdateSnapshot(currentVersion: currentVersion)
+    super.init()
   }
 
   func checkForUpdates(showNoUpdateMessage: Bool, completion: @escaping (FlutterMacUpdateSnapshot) -> Void) {
@@ -516,32 +561,165 @@ private final class FlutterMacUpdateManager {
       completion(snapshot)
       return
     }
+    guard !snapshot.downloadStates.values.contains(where: { $0.isBusy }) else {
+      snapshot.downloadStates[tagName] = FlutterMacDownloadState(progress: -1, message: "已有更新任务正在进行。")
+      completion(snapshot)
+      return
+    }
+    let destination = updateDirectory().appendingPathComponent(release.assetName)
+    do {
+      try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try? FileManager.default.removeItem(at: destination)
+    } catch {
+      snapshot.downloadStates[tagName] = FlutterMacDownloadState(progress: -1, message: "无法准备下载目录：\(error.localizedDescription)")
+      completion(snapshot)
+      return
+    }
     snapshot.downloadStates[tagName] = FlutterMacDownloadState(progress: 0, message: "准备下载...")
     completion(snapshot)
 
-    URLSession.shared.downloadTask(with: url) { [weak self] temporaryURL, _, error in
-      guard let self else { return }
-      if let error {
-        self.snapshot.downloadStates[tagName] = FlutterMacDownloadState(progress: -1, message: "下载失败：\(error.localizedDescription)")
-        DispatchQueue.main.async { completion(self.snapshot) }
-        return
+    let task = downloadSession.downloadTask(with: url)
+    downloadContexts[task.taskIdentifier] = DownloadContext(
+      release: release,
+      destination: destination,
+      completion: completion
+    )
+    task.resume()
+  }
+
+  func install(tagName: String, completion: @escaping (FlutterMacUpdateSnapshot) -> Void) -> Bool {
+    guard let release = ([snapshot.latestRelease].compactMap { $0 } + snapshot.historyReleases).first(where: { $0.tagName == tagName }) else {
+      snapshot.message = "没有找到要安装的版本。"
+      completion(snapshot)
+      return false
+    }
+    guard let state = snapshot.downloadStates[tagName],
+          state.isVerified,
+          let localFilePath = state.localFilePath,
+          FileManager.default.fileExists(atPath: localFilePath) else {
+      snapshot.downloadStates[tagName] = FlutterMacDownloadState(progress: -1, message: "请先下载并校验安装包。")
+      completion(snapshot)
+      return false
+    }
+    let helperURL = Bundle.main.bundleURL
+      .appendingPathComponent("Contents")
+      .appendingPathComponent("Helpers")
+      .appendingPathComponent("CastPigeonUpdater")
+    guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
+      snapshot.downloadStates[tagName] = FlutterMacDownloadState(
+        progress: 100,
+        isVerified: true,
+        message: "没有找到自动安装器，请重新构建应用。",
+        localFilePath: localFilePath
+      )
+      completion(snapshot)
+      return false
+    }
+
+    let process = Process()
+    process.executableURL = helperURL
+    process.arguments = [
+      "--dmg", localFilePath,
+      "--app", Bundle.main.bundleURL.path,
+      "--pid", "\(ProcessInfo.processInfo.processIdentifier)",
+      "--bundle-id", Bundle.main.bundleIdentifier ?? "com.suseoaa.castpigeon"
+    ]
+    do {
+      try process.run()
+      snapshot.downloadStates[tagName] = FlutterMacDownloadState(
+        progress: 100,
+        isVerified: true,
+        isInstalling: true,
+        message: "正在启动安装器，投鸽即将自动重启到 \(release.version) 版本...",
+        localFilePath: localFilePath
+      )
+      completion(snapshot)
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+        NSApp.terminate(nil)
       }
-      guard let temporaryURL else {
-        self.snapshot.downloadStates[tagName] = FlutterMacDownloadState(progress: -1, message: "下载失败。")
-        DispatchQueue.main.async { completion(self.snapshot) }
-        return
+      return true
+    } catch {
+      snapshot.downloadStates[tagName] = FlutterMacDownloadState(
+        progress: 100,
+        isVerified: true,
+        message: "启动安装器失败：\(error.localizedDescription)",
+        localFilePath: localFilePath
+      )
+      completion(snapshot)
+      return false
+    }
+  }
+
+  func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+    guard let context = downloadContexts[downloadTask.taskIdentifier] else { return }
+    let progress = totalBytesExpectedToWrite > 0
+      ? Int((Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) * 100).rounded(.down))
+      : 0
+    snapshot.downloadStates[context.release.tagName] = FlutterMacDownloadState(
+      progress: min(99, max(0, progress)),
+      message: "正在下载 \(context.release.assetName)..."
+    )
+    context.completion(snapshot)
+  }
+
+  func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+    guard let context = downloadContexts[downloadTask.taskIdentifier] else { return }
+    do {
+      try? FileManager.default.removeItem(at: context.destination)
+      try FileManager.default.moveItem(at: location, to: context.destination)
+      snapshot.downloadStates[context.release.tagName] = FlutterMacDownloadState(
+        progress: 100,
+        isVerifying: true,
+        message: "正在校验安装包...",
+        localFilePath: context.destination.path
+      )
+      context.completion(snapshot)
+      verifyDownloadedRelease(context)
+    } catch {
+      snapshot.downloadStates[context.release.tagName] = FlutterMacDownloadState(
+        progress: -1,
+        message: "保存失败：\(error.localizedDescription)"
+      )
+      context.completion(snapshot)
+      downloadContexts.removeValue(forKey: downloadTask.taskIdentifier)
+    }
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    guard let error,
+          let context = downloadContexts.removeValue(forKey: task.taskIdentifier) else {
+      return
+    }
+    snapshot.downloadStates[context.release.tagName] = FlutterMacDownloadState(
+      progress: -1,
+      message: "下载失败：\(error.localizedDescription)"
+    )
+    context.completion(snapshot)
+  }
+
+  private func verifyDownloadedRelease(_ context: DownloadContext) {
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      let result = self?.verifyFile(at: context.destination, release: context.release) ?? .failure(UpdateError("校验器已释放。"))
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        switch result {
+        case .success(let message):
+          self.snapshot.downloadStates[context.release.tagName] = FlutterMacDownloadState(
+            progress: 100,
+            isVerified: true,
+            message: message,
+            localFilePath: context.destination.path
+          )
+        case .failure(let error):
+          self.snapshot.downloadStates[context.release.tagName] = FlutterMacDownloadState(
+            progress: -1,
+            message: "安装包校验失败：\(error.localizedDescription)"
+          )
+        }
+        self.downloadContexts = self.downloadContexts.filter { $0.value.release.tagName != context.release.tagName }
+        context.completion(self.snapshot)
       }
-      let destination = self.uniqueDownloadURL(fileName: release.assetName)
-      try? FileManager.default.removeItem(at: destination)
-      do {
-        try FileManager.default.moveItem(at: temporaryURL, to: destination)
-        self.snapshot.downloadStates[tagName] = FlutterMacDownloadState(progress: 100, message: "已下载到 \(destination.path)")
-        NSWorkspace.shared.activateFileViewerSelecting([destination])
-      } catch {
-        self.snapshot.downloadStates[tagName] = FlutterMacDownloadState(progress: -1, message: "保存失败：\(error.localizedDescription)")
-      }
-      DispatchQueue.main.async { completion(self.snapshot) }
-    }.resume()
+    }
   }
 
   private func fetchPlatformReleases(completion: @escaping (Result<[FlutterMacRelease], Error>) -> Void) {
@@ -582,13 +760,16 @@ private final class FlutterMacUpdateManager {
         .dropFirst(prefix.count)
         .dropLast(4)
       guard String(version) == tagVersion else { continue }
+      let checksumAsset = release.assets.first { $0.name == "\(asset.name).sha256" }
       return FlutterMacRelease(
         version: String(version),
         tagName: release.tagName,
         title: releaseDisplayName(release),
         body: release.body ?? "",
         assetName: asset.name,
-        downloadURL: asset.browserDownloadURL
+        downloadURL: asset.browserDownloadURL,
+        checksumURL: checksumAsset?.browserDownloadURL,
+        digest: asset.digest
       )
     }
     return nil
@@ -611,19 +792,59 @@ private final class FlutterMacUpdateManager {
       .map { Int($0.prefix(while: { $0.isNumber })) ?? 0 }
   }
 
-  private func uniqueDownloadURL(fileName: String) -> URL {
-    let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-      ?? FileManager.default.homeDirectoryForCurrentUser
-    let base = downloads.appendingPathComponent(fileName)
-    if !FileManager.default.fileExists(atPath: base.path) { return base }
-    let name = (fileName as NSString).deletingPathExtension
-    let ext = (fileName as NSString).pathExtension
-    var index = 2
-    while true {
-      let candidate = downloads.appendingPathComponent(ext.isEmpty ? "\(name)-\(index)" : "\(name)-\(index).\(ext)")
-      if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
-      index += 1
+  private func updateDirectory() -> URL {
+    FileManager.default.temporaryDirectory
+      .appendingPathComponent("CastPigeonUpdates", isDirectory: true)
+  }
+
+  private func verifyFile(at fileURL: URL, release: FlutterMacRelease) -> Result<String, Error> {
+    do {
+      guard let expectedDigest = try expectedDigest(for: release) else {
+        return .success("下载完成，可以安装。")
+      }
+      let actualDigest = try sha256(fileURL)
+      guard actualDigest == expectedDigest else {
+        return .failure(UpdateError("SHA256 不匹配。"))
+      }
+      return .success("下载完成，校验通过，可以自动安装。")
+    } catch {
+      return .failure(error)
     }
+  }
+
+  private func expectedDigest(for release: FlutterMacRelease) throws -> String? {
+    if let digest = normalizedDigest(release.digest) {
+      return digest
+    }
+    guard let checksumURL = release.checksumURL,
+          let url = URL(string: checksumURL) else {
+      return nil
+    }
+    let content = try String(contentsOf: url, encoding: .utf8)
+    return normalizedDigest(content)
+  }
+
+  private func normalizedDigest(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let candidates = value
+      .replacingOccurrences(of: "sha256:", with: "", options: .caseInsensitive)
+      .split(whereSeparator: { $0.isWhitespace || $0 == "*" })
+      .map(String.init)
+    return candidates.first { candidate in
+      candidate.count == 64 && candidate.allSatisfy { $0.isHexDigit }
+    }?.lowercased()
+  }
+
+  private func sha256(_ fileURL: URL) throws -> String {
+    let handle = try FileHandle(forReadingFrom: fileURL)
+    defer { try? handle.close() }
+    var hasher = SHA256()
+    while true {
+      let data = try handle.read(upToCount: 1024 * 1024)
+      guard let data, !data.isEmpty else { break }
+      hasher.update(data: data)
+    }
+    return hasher.finalize().map { String(format: "%02x", $0) }.joined()
   }
 
   private func releaseDisplayName(_ release: GitHubReleaseResponse) -> String {
@@ -631,6 +852,18 @@ private final class FlutterMacUpdateManager {
       return release.tagName
     }
     return name
+  }
+}
+
+private struct UpdateError: LocalizedError {
+  let message: String
+
+  init(_ message: String) {
+    self.message = message
+  }
+
+  var errorDescription: String? {
+    message
   }
 }
 
@@ -655,9 +888,11 @@ private struct GitHubReleaseResponse: Decodable {
 private struct GitHubReleaseAssetResponse: Decodable {
   let name: String
   let browserDownloadURL: String
+  let digest: String?
 
   enum CodingKeys: String, CodingKey {
     case name
     case browserDownloadURL = "browser_download_url"
+    case digest
   }
 }

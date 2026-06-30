@@ -451,6 +451,7 @@ class ReleaseDownloadState {
     required this.progress,
     required this.isVerifying,
     required this.isVerified,
+    required this.isInstalling,
     required this.message,
   });
 
@@ -459,6 +460,7 @@ class ReleaseDownloadState {
       progress: json['progress'] as int? ?? -1,
       isVerifying: json['isVerifying'] as bool? ?? false,
       isVerified: json['isVerified'] as bool? ?? false,
+      isInstalling: json['isInstalling'] as bool? ?? false,
       message: json['message'] as String?,
     );
   }
@@ -466,6 +468,7 @@ class ReleaseDownloadState {
   final int progress;
   final bool isVerifying;
   final bool isVerified;
+  final bool isInstalling;
   final String? message;
 }
 
