@@ -165,9 +165,17 @@ class MainActivity : FlutterActivity() {
             "appIconBase64" -> result.success(runtime.appIconBase64(call.argument<String>("packageName").orEmpty()))
             "historyIconBase64" -> result.success(runtime.historyIconBase64(call.argument<String>("appName").orEmpty()))
             "sendTestNotification" -> result.success(runtime.sendTestNotification())
+            "themePreference" -> result.success(themePreferences().getString(THEME_PREFERENCE_KEY, "system"))
+            "setThemePreference" -> {
+                val preference = call.argument<String>("preference").orEmpty().ifBlank { "system" }
+                themePreferences().edit().putString(THEME_PREFERENCE_KEY, preference).apply()
+                result.success(true)
+            }
             else -> result.notImplemented()
         }
     }
+
+    private fun themePreferences() = getSharedPreferences(THEME_PREFERENCES_NAME, MODE_PRIVATE)
 
     private fun launchFilePicker(device: UdpDevice) {
         pendingFileDevice = mapOf(
@@ -212,5 +220,7 @@ class MainActivity : FlutterActivity() {
         private const val EVENT_CHANNEL = "castpigeon.android/snapshots"
         private const val STARTUP_PERMISSION_REQUEST_CODE = 48510
         private const val FILE_PICKER_REQUEST_CODE = 48511
+        private const val THEME_PREFERENCES_NAME = "castpigeon_theme"
+        private const val THEME_PREFERENCE_KEY = "theme_preference"
     }
 }

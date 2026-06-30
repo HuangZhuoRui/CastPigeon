@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>CastPigeon</string>
+	<string>投鸽</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFile</key>
@@ -17,7 +17,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>CastPigeon</string>
+	<string>投鸽</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -27,13 +27,13 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>CastPigeon 使用蓝牙发现并连接已绑定设备。</string>
+	<string>投鸽使用蓝牙发现并连接已绑定设备。</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>CastPigeon 使用蓝牙广播并同步通知、剪贴板和设备能力。</string>
+	<string>投鸽使用蓝牙广播并同步通知、剪贴板和设备能力。</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>$(PRODUCT_COPYRIGHT)</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>CastPigeon 使用局域网发现设备并传输文件。</string>
+	<string>投鸽使用局域网发现设备并传输文件。</string>
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>

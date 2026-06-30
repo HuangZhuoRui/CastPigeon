@@ -91,7 +91,7 @@ class CastPigeonSnapshot {
       pairingDeviceName: json['pairingDeviceName'] as String?,
       connectedDeviceName: json['connectedDeviceName'] as String?,
       connectedDeviceHashes: _stringList(json['connectedDeviceHashes']),
-      localDeviceName: json['localDeviceName'] as String? ?? 'CastPigeon',
+      localDeviceName: json['localDeviceName'] as String? ?? '投鸽',
       localDeviceHash: json['localDeviceHash'] as String? ?? '',
       onlineDevices: _list(
         json['onlineDevices'],
@@ -132,7 +132,7 @@ class CastPigeonSnapshot {
     pairingDeviceName: null,
     connectedDeviceName: null,
     connectedDeviceHashes: [],
-    localDeviceName: 'CastPigeon',
+    localDeviceName: '投鸽',
     localDeviceHash: '',
     onlineDevices: [],
     boundDevices: [],

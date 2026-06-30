@@ -2,21 +2,27 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:castpigeon_flutter/core/bridge/cast_pigeon_api.dart';
+import 'package:castpigeon_flutter/core/theme/theme_controller.dart';
 import 'package:castpigeon_flutter/main.dart';
 
 void main() {
   testWidgets('CastPigeon renders the full tab shell', (tester) async {
+    _installThemePreferenceMock();
+    final themeController = await ThemeController.create();
     final api = _TestCastPigeonApi();
-    await tester.pumpWidget(CastPigeonApp(api: api));
+    await tester.pumpWidget(
+      CastPigeonApp(api: api, themeController: themeController),
+    );
     api.emit(CastPigeonSnapshot.empty);
     await tester.pump();
 
     expect(find.text('系统待机中'), findsWidgets);
     if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
-      expect(find.text('CastPigeon 工作台'), findsOneWidget);
+      expect(find.text('投鸽工作台'), findsOneWidget);
       expect(find.text('BLE 实时诊断日志：'), findsOneWidget);
       expect(find.text('工作台'), findsOneWidget);
       expect(find.text('设备管理'), findsOneWidget);
@@ -26,6 +32,27 @@ void main() {
       expect(find.byType(IconButton), findsNWidgets(4));
     }
   });
+}
+
+void _installThemePreferenceMock() {
+  Future<Object?> handler(MethodCall call) async {
+    return switch (call.method) {
+      'themePreference' => 'system',
+      'setThemePreference' => true,
+      _ => null,
+    };
+  }
+
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(
+        const MethodChannel('castpigeon.android/methods'),
+        handler,
+      );
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(
+        const MethodChannel('castpigeon.macos/methods'),
+        handler,
+      );
 }
 
 class _TestCastPigeonApi implements CastPigeonApi {

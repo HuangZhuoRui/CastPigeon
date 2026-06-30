@@ -186,6 +186,11 @@ final class MacOSCastPigeonBridge: NSObject, FlutterStreamHandler, UNUserNotific
       viewModel.debugLogs.removeAll()
       emitSnapshot()
       result(true)
+    case "themePreference":
+      result(UserDefaults.standard.string(forKey: "themePreference") ?? "system")
+    case "setThemePreference":
+      UserDefaults.standard.set(arguments["preference"] as? String ?? "system", forKey: "themePreference")
+      result(true)
     default:
       result(FlutterMethodNotImplemented)
     }

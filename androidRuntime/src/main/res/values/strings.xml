@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">CastPigeon</string>
+    <string name="app_name">投鸽</string>
     <!-- NotificationListenerService 在系统设置中显示的名称与描述 -->
     <string name="notification_listener_service_label">CastPigeon Notification Sync</string>
     <string name="notification_listener_service_description">
